@@ -4,7 +4,7 @@ import {
 } from "react-native";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import { useRoute } from "@react-navigation/native";
+import { useRoute, useNavigation } from "@react-navigation/native";
 import { colors } from "../theme";
 import { logger } from "../utils/logger";
 import { useAppFile } from "../store/AppContext";
@@ -14,6 +14,10 @@ import { addHistoryRecord } from "../store/storage";
 import { copyText, formatOffset } from "../utils/copyText";
 import AppModal from "../components/AppModal";
 import DeveloperFooter from "../components/DeveloperFooter";
+import { patchZone, zoneMessage } from "../domain/textGuard";
+import { hexDiffWindow } from "../domain/patchDiff";
+import { navigateRoot } from "../utils/nav";
+
 
 function parseOffset(raw: string): number {
   const s = raw.trim().toLowerCase();
@@ -24,13 +28,14 @@ function parseOffset(raw: string): number {
 
 export default function ManualPatchScreen() {
   const route = useRoute<any>();
-  const { buffer, fileName, updateBuffer } = useAppFile();
+  const navigation = useNavigation<any>();
+  const { buffer, fileName, updateBuffer, textRange, enqueuePatch, patchQueue, dirty, markClean, fingerprint } = useAppFile();
   const [offsetStr, setOffsetStr] = useState("");
   const [hexStr, setHexStr] = useState("");
   const [disasm, setDisasm] = useState<{ hexOffset: string; hex: string; asm: string; isCenter?: boolean }[]>([]);
   const [log, setLog] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [modal, setModal] = useState<{ title: string; message: string } | null>(null);
+  const [modal, setModal] = useState<{ title: string; message: string; actions?: any } | null>(null);
 
   useEffect(() => {
     const initial = route.params?.initialOffset;
@@ -85,8 +90,10 @@ export default function ManualPatchScreen() {
       newValue: res.newHex,
       type: "hex",
       note: "manual toggle bool",
+      fingerprint: fingerprint || undefined,
     });
-    setModal({ title: "Патч", message: `${res.oldHex} → ${res.newHex}` });
+    const diff = hexDiffWindow(buffer, res.buffer, off, 8);
+    setModal({ title: "Патч", message: `${res.oldHex} → ${res.newHex}\n\n${diff}` });
   };
 
   const doWriteHex = async () => {
@@ -96,9 +103,36 @@ export default function ManualPatchScreen() {
       setModal({ title: "Offset", message: "Укажи offset" });
       return;
     }
+    const zone = patchZone(off, textRange);
+    if (zone === "data") {
+      setModal({
+        title: "Offset в data",
+        message:
+          zoneMessage(zone) +
+          "\n\nЗапись в data редко открывает Pro и может сломать so.\nЧтобы всё равно записать — ещё раз нажми «Записать HEX» после смены offset в .text или подтверди ниже.",
+        actions: [
+          { label: "Отмена", variant: "ghost" as const, onPress: () => setModal(null) },
+          {
+            label: "Всё равно записать",
+            variant: "danger" as const,
+            onPress: () => {
+              setModal(null);
+              void writeHexForce(off);
+            },
+          },
+        ],
+      });
+      return;
+    }
+    await writeHexForce(off);
+  };
+
+  const writeHexForce = async (off: number) => {
+    if (!buffer) return;
     setLoading(true);
     try {
       const res = patchBytesAt(buffer, off, hexStr);
+      const diff = hexDiffWindow(buffer, res.buffer, off, 8);
       updateBuffer(res.buffer);
       setDisasm(disasmAt(res.buffer, off, 14));
       setLog((l) => [`WRITE ${res.oldHex} → ${res.newHex} @ 0x${off.toString(16)}`, ...l].slice(0, 40));
@@ -109,8 +143,10 @@ export default function ManualPatchScreen() {
         newValue: res.newHex,
         type: "hex",
         note: "manual write",
+        fingerprint: fingerprint || undefined,
       });
-      setModal({ title: "Записано", message: `${res.oldHex} → ${res.newHex}` });
+      // session dirty/fp already updated via updateBuffer → persistSession
+      setModal({ title: "Записано", message: `${res.oldHex} → ${res.newHex}\n\n${diff}` });
     } catch (e: any) {
       setModal({ title: "Ошибка", message: e.message });
     } finally {
@@ -126,19 +162,41 @@ export default function ManualPatchScreen() {
       (fileName || "libapp").replace(/\.so$/i, "") +
       "_manual.so";
     await FileSystem.writeAsStringAsync(out, b64, { encoding: "base64" });
+    markClean();
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(out, { mimeType: "application/octet-stream" });
     }
+    setModal({ title: "Сохранено", message: out.split("/").pop() || "so" });
   };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
       
-      <Text style={{ color: "#AAAAAA", fontSize: 12, marginBottom: 10, paddingHorizontal: 4 }} selectable>Шаг 3: offset из Code candidates (Analyze), не из строк isPro. HEX: 00 00 80 D2 → 20 00 80 D2</Text>
+      <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 10, paddingHorizontal: 4 }} selectable>Шаг 3: offset из Code candidates (Analyze), не из строк isPro. HEX: 00 00 80 D2 → 20 00 80 D2</Text>
 <Text style={styles.title} selectable>Manual Patch</Text>
       <Text style={styles.sub} selectable>
         {buffer ? fileName || "в памяти" : "Нет файла — открой на «Поиск»"}
+        {dirty ? " · dirty" : ""}
       </Text>
+      {patchQueue.length > 0 && (
+        <TouchableOpacity
+          style={{
+            alignSelf: "flex-start",
+            backgroundColor: colors.goldSoft,
+            borderRadius: 10,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            marginBottom: 10,
+            borderWidth: 1,
+            borderColor: colors.borderGold,
+          }}
+          onPress={() => navigateRoot(navigation, "Queue")}
+        >
+          <Text style={{ color: colors.gold, fontWeight: "800", fontSize: 13 }} selectable>
+            Очередь ({patchQueue.length}) →
+          </Text>
+        </TouchableOpacity>
+      )}
       <Text style={styles.hint} selectable>
         Один offset за раз. Offset из Analyze / R2Droid. Не используй массовый auto на рискованных SO.
       </Text>
@@ -196,6 +254,72 @@ export default function ManualPatchScreen() {
         </View>
       )}
 
+      <Text style={styles.label} selectable>Шаблоны ARM64</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        {[
+          { label: "x0=1", hex: "20 00 80 D2" },
+          { label: "x0=0", hex: "00 00 80 D2" },
+          { label: "w0=1", hex: "20 00 80 52" },
+          { label: "w0=0", hex: "00 00 80 52" },
+          { label: "ret", hex: "C0 03 5F D6" },
+          { label: "nop", hex: "1F 20 03 D5" },
+        ].map((t) => (
+          <TouchableOpacity
+            key={t.label}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              borderRadius: 10,
+              backgroundColor: colors.surface,
+              borderWidth: 1,
+              borderColor: colors.borderGold,
+            }}
+            onPress={() => setHexStr(t.hex)}
+          >
+            <Text style={{ color: colors.gold, fontWeight: "700", fontSize: 12 }} selectable>
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <TouchableOpacity
+        style={styles.secBtn}
+        onPress={() => {
+          const off = parseOffset(offsetStr);
+          if (isNaN(off) || !hexStr.trim()) {
+            setModal({ title: "Очередь", message: "Нужны offset и hex" });
+            return;
+          }
+          const zone = patchZone(off, textRange);
+          enqueuePatch({
+            offset: off,
+            hexOffset: formatOffset(off),
+            oldHex: buffer ? bufferToHex(buffer, off, Math.ceil(hexStr.replace(/\s+/g, "").length / 2)) : "",
+            newHex: hexStr.trim(),
+            note: zoneMessage(zone),
+            source: "manual",
+          });
+          setModal({
+            title: "В очереди",
+            message: `${formatOffset(off)} → ${hexStr.trim()}\n${zoneMessage(zone)}\nВсего в очереди: ${patchQueue.length + 1}`,
+          });
+        }}
+      >
+        <Text style={styles.secText} selectable>В очередь патчей ({patchQueue.length})</Text>
+      </TouchableOpacity>
+
+      {!!offsetStr && (
+        <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 8, lineHeight: 17 }} selectable>
+          {(() => {
+            const off = parseOffset(offsetStr);
+            if (isNaN(off)) return "";
+            return zoneMessage(patchZone(off, textRange));
+          })()}
+          {dirty ? " · есть несохранённые изменения" : ""}
+        </Text>
+      )}
+
       <TouchableOpacity style={[styles.secBtn, { marginTop: 12 }]} onPress={saveFile} disabled={!buffer}>
         <Text style={styles.secText} selectable>Сохранить / Share .so</Text>
       </TouchableOpacity>
@@ -214,6 +338,7 @@ export default function ManualPatchScreen() {
         title={modal?.title || ""}
         message={modal?.message || ""}
         onClose={() => setModal(null)}
+        actions={(modal as any)?.actions}
       />
     </ScrollView>
   );
@@ -233,7 +358,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.gold, borderRadius: 12, paddingVertical: 16, minHeight: 48, alignItems: "center", justifyContent: "center", marginBottom: 10,
   },
   warnBtn: {
-    backgroundColor: "#C0392B", borderRadius: 12, padding: 14, alignItems: "center", marginBottom: 10,
+    backgroundColor: colors.dangerDark, borderRadius: 12, padding: 14, alignItems: "center", marginBottom: 10,
   },
   mainText: { color: colors.onGold, fontWeight: "800" },
   secBtn: {

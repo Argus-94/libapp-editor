@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback } from "react";
 import {
-  View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, Alert, Share,
+  View, Text, FlatList, StyleSheet, TouchableOpacity, TextInput, Share,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { colors } from "../theme";
+import { useDialog } from "../components/DialogProvider";
 import {
   getLogs, clearLogs, exportLogsText, importLogsText, subscribeLogs,
   LogEntry, LogLevel, listTags, logCount, logger,
@@ -15,10 +16,10 @@ import DeveloperFooter from "../components/DeveloperFooter";
 const LEVELS: (LogLevel | "all")[] = ["all", "debug", "info", "warn", "error"];
 
 function levelColor(l: LogLevel): string {
-  if (l === "error") return "#E74C3C";
-  if (l === "warn") return "#E67E22";
-  if (l === "info") return "#3498DB";
-  return "#7F8C8D";
+  if (l === "error") return colors.danger;
+  if (l === "warn") return colors.warning;
+  if (l === "info") return "#5DADE2";
+  return colors.textSecondary;
 }
 
 function fmtTime(ts: number): string {
@@ -31,6 +32,7 @@ function fmtTime(ts: number): string {
 }
 
 export default function LogcatScreen() {
+  const dialog = useDialog();
   const [level, setLevel] = useState<LogLevel | "all">("all");
   const [tag, setTag] = useState("all");
   const [q, setQ] = useState("");
@@ -54,7 +56,7 @@ export default function LogcatScreen() {
   const doExport = async () => {
     const text = exportLogsText();
     if (!text) {
-      Alert.alert("Пусто", "Лог пуст");
+      dialog.alert("Пусто", "Лог пуст");
       return;
     }
     const uri = (FileSystem.cacheDirectory || "") + `libapp_editor_logcat_${Date.now()}.txt`;
@@ -77,26 +79,25 @@ export default function LogcatScreen() {
       const text = await FileSystem.readAsStringAsync(res.assets[0].uri, { encoding: "utf8" });
       const n = importLogsText(text);
       refresh();
-      Alert.alert("Импорт", `Добавлено строк: ${n}`);
+      dialog.alert("Импорт", `Добавлено строк: ${n}`);
       logger.info("Logcat", "imported", { n });
     } catch (e: any) {
-      Alert.alert("Ошибка", e.message || String(e));
+      dialog.alert("Ошибка", e.message || String(e));
     }
   };
 
   const doClear = () => {
-    Alert.alert("Очистить лог?", `Сейчас ${logCount()} записей`, [
-      { text: "Отмена", style: "cancel" },
-      {
-        text: "Очистить",
-        style: "destructive",
-        onPress: () => {
-          clearLogs();
-          logger.info("Logcat", "cleared by user");
-          refresh();
-        },
+    dialog.confirm(
+      "Очистить лог?",
+      `Сейчас ${logCount()} записей`,
+      () => {
+        clearLogs();
+        logger.info("Logcat", "cleared by user");
+        refresh();
       },
-    ]);
+      "Очистить",
+      true
+    );
   };
 
   return (

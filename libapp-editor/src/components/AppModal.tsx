@@ -52,7 +52,7 @@ export default function AppModal({
               <SelectableText style={styles.message} copyValue={message}>{message}</SelectableText>
             </ScrollView>
           )}
-          {children}
+          {children ? <View style={{ marginBottom: 8, maxHeight: 420 }}>{children}</View> : null}
           {list.length > 0 && (
             <View style={styles.actions}>
               {list.map((a) => {
@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     borderWidth: 1,
     borderColor: colors.borderGold,
-    maxHeight: "80%",
+    maxHeight: "88%",
     overflow: "hidden",
   },
   accentBar: {
@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     letterSpacing: 0.2,
   },
-  msgScroll: { maxHeight: 280, marginBottom: 8 },
+  msgScroll: { maxHeight: 420, marginBottom: 8 },
   message: {
     color: colors.text,
     fontSize: 14,

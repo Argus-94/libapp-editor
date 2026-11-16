@@ -146,3 +146,39 @@ function getDefaultPresets(): PatchPreset[] {
     },
   ];
 }
+
+const SESSION_KEY = "@libapp/sessionMeta";
+
+export type SessionMeta = {
+  fileName: string;
+  fingerprint: string | null;
+  dirty: boolean;
+  textRange: { start: number; end: number } | null;
+  lastRisk?: string;
+  savedAt: number;
+};
+
+export async function saveSessionMeta(meta: SessionMeta) {
+  try {
+    await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(meta));
+  } catch {
+    /* */
+  }
+}
+
+export async function loadSessionMeta(): Promise<SessionMeta | null> {
+  try {
+    const raw = await AsyncStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearSessionMeta() {
+  try {
+    await AsyncStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* */
+  }
+}

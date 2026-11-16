@@ -2,20 +2,21 @@
   "expo": {
     "name": "LibApp Editor",
     "slug": "libapp-editor",
-    "version": "2.10.2",
+    "version": "2.12.8",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+    "backgroundColor": "#0A0A0A",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0D0D0D"
+      "backgroundColor": "#0A0A0A"
     },
     "android": {
       "package": "com.libappeditor.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0D0D0D"
+        "backgroundColor": "#0A0A0A"
       },
       "permissions": []
     },
@@ -27,6 +28,15 @@
           "android": {
             "kotlinVersion": "1.9.25"
           }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0A0A0A"
         }
       ]
     ],

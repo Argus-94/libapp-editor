@@ -19,67 +19,111 @@ import { APP_VERSION } from "../version";
 import { copyText } from "../utils/copyText";
 import SelectableText from "../components/SelectableText";
 import { logger } from "../utils/logger";
-import { scanCodeCandidates, CodeCandidate } from "../utils/onDeviceRe";
+import { openLibappFile } from "../utils/openLibapp";
+import CandidateCard from "../components/CandidateCard";
+import { navigateRoot, navigatePatch } from "../utils/nav";
+import { CodeCandidate } from "../utils/onDeviceRe";
+import { runCodeSearch, stringsFromReport } from "../domain/codeSearch";
+import { persistSession } from "../services/fileSession";
 const APP_VER = APP_VERSION;
 
 export default function AnalyzeScreen({ navigation }: any) {
-  const { buffer, fileName } = useAppFile();
+  const { buffer, fileName, setFile, setBackupUri, setTextRange, setLastReport, dirty, enqueuePatch } = useAppFile();
   const [loading, setLoading] = useState(false);
+  const [phase2, setPhase2] = useState(false);
   const [report, setReport] = useState<AnalyzeReport | null>(null);
   const [disasm, setDisasm] = useState<{ hexOffset: string; hex: string; asm: string; isCenter?: boolean }[]>([]);
-  const [modal, setModal] = useState<{ title: string; message: string } | null>(null);
+  const [modal, setModal] = useState<{ title: string; message: string; actions?: any } | null>(null);
   const [codeCandidates, setCodeCandidates] = useState<CodeCandidate[]>([]);
+
+  const pickFile = async () => {
+    setLoading(true);
+    try {
+      const r = await openLibappFile();
+      if (!r.ok) {
+        if (r.error !== "cancelled") setModal({ title: "Файл", message: r.error });
+        return;
+      }
+      setFile(r.buffer, r.name, r.uri, { backupUri: r.backupUri });
+      if (r.backupUri) setBackupUri(r.backupUri);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const run = () => {
     if (!buffer) {
-      setModal({ title: "Нет файла", message: "Открой libapp.so на вкладке «Поиск»." });
+      setModal({ title: "Нет файла", message: "Нажми «Открыть libapp.so» выше или выбери файл на вкладке Файл." });
       return;
     }
     setLoading(true);
     setDisasm([]);
     setCodeCandidates([]);
-    setTimeout(() => {
+    // Phase 1: ELF + risk (fast paint)
+    requestAnimationFrame(() => {
       try {
         const r = analyzeLibapp(buffer, fileName || "libapp.so", APP_VER);
-        logger.info("Analyze", "done", { risk: r.risk.level, score: r.risk.score, imm: r.patterns.immRet });
+        logger.info("Analyze", "phase1", { risk: r.risk.level, score: r.risk.score });
         setReport(r);
+        if (r.elf.textRange) setTextRange(r.elf.textRange);
+        setLastReport(r);
+        let fp: string | null = null;
         try {
-          const cands = scanCodeCandidates({
-            buffer,
-            textRange: r.elf.textRange,
-            strings: r.getterNames.map((g) => ({ key: g.key, offset: g.offset })),
-          });
-          setCodeCandidates(cands);
-          logger.info("Analyze", "codeCandidates", { n: cands.length, top: cands[0]?.hexOffset });
-        } catch (e: any) {
-          setCodeCandidates([]);
-          logger.warn("Analyze", "codeCandidates failed", e?.message);
+          fp = soFingerprint(buffer);
+        } catch {
+          /* */
         }
-        try {
-          const feats = scanPremiumFeatures(buffer, { maxPerKey: 4, boolRadius: 0 });
-          const sum = summarizeFeatures(feats);
-          saveLastAnalyze({
-            fileName: fileName || "libapp.so",
-            fileSize: buffer.length,
-            riskLevel: r.risk.level,
-            riskScore: r.risk.score,
-            immRet: r.patterns.immRet,
-            nearRet12: r.patterns.nearRet12,
-            topKeys: sum.topKeys,
-            fingerprint: soFingerprint(buffer),
-            analyzedAt: Date.now(),
-          });
-        } catch {}
-        // auto-disasm first getter if any
-        if (r.getterNames[0]) {
-          setDisasm(disasmAt(buffer, r.getterNames[0].offset, 10));
-        }
+        persistSession({
+          fileName: fileName || "libapp.so",
+          fingerprint: fp,
+          dirty,
+          textRange: r.elf.textRange
+            ? { start: r.elf.textRange.start, end: r.elf.textRange.end }
+            : null,
+          lastRisk: r.risk.level,
+        }).catch(() => {});
+        setLoading(false);
+        setPhase2(true);
+        // Phase 2: candidates + meta (deferred)
+        requestAnimationFrame(() => {
+          try {
+            const { candidates: cands } = runCodeSearch({
+              buffer,
+              textRange: r.elf.textRange,
+              strings: stringsFromReport(r),
+            });
+            setCodeCandidates(cands);
+            logger.info("Analyze", "phase2", { n: cands.length });
+          } catch (e: any) {
+            setCodeCandidates([]);
+            logger.warn("Analyze", "codeCandidates failed", e?.message);
+          }
+          try {
+            const feats = scanPremiumFeatures(buffer, { maxPerKey: 4, boolRadius: 0 });
+            const sum = summarizeFeatures(feats);
+            saveLastAnalyze({
+              fileName: fileName || "libapp.so",
+              fileSize: buffer.length,
+              riskLevel: r.risk.level,
+              riskScore: r.risk.score,
+              immRet: r.patterns.immRet,
+              nearRet12: r.patterns.nearRet12,
+              topKeys: sum.topKeys,
+              fingerprint: soFingerprint(buffer),
+              analyzedAt: Date.now(),
+            });
+          } catch {}
+          if (r.getterNames[0]) {
+            setDisasm(disasmAt(buffer, r.getterNames[0].offset, 10));
+          }
+          setPhase2(false);
+        });
       } catch (e: any) {
         setModal({ title: "Ошибка анализа", message: e.message || String(e) });
-      } finally {
         setLoading(false);
+        setPhase2(false);
       }
-    }, 40);
+    });
   };
 
   const exportReport = async (fmt: "md" | "json") => {
@@ -101,27 +145,102 @@ export default function AnalyzeScreen({ navigation }: any) {
 
   const riskColor =
     report?.risk.level === "CRITICAL" || report?.risk.level === "HIGH"
-      ? "#E74C3C"
+      ? colors.danger
       : report?.risk.level === "MEDIUM"
-      ? "#F39C12"
-      : "#2ECC71";
+      ? colors.warning
+      : colors.success;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16, paddingBottom: 48 }}>
-      <Text style={styles.title} selectable>2. Анализ</Text>
       <Text style={styles.sub} selectable>
-        {buffer ? fileName || "файл в памяти" : "Сначала открой libapp.so"}
+        {buffer ? (fileName || "файл в памяти") + (dirty ? " · изменён" : "") : "Файл не выбран"}
       </Text>
       <Text style={styles.hint} selectable>
-        Шаг 2: risk + Code candidates в .text. Строки isPro — не патчить. Дальше вкладка «Патч».
+        Полный отчёт: ELF, risk, Code candidates в .text. Строки isPro сами по себе не патчить — смотри кандидаты кода. Это не то же самое, что PRO-скан (там только маркеры платных фич).
       </Text>
+
+      <TouchableOpacity style={styles.fileBtn} onPress={pickFile} disabled={loading}>
+        <Text style={styles.fileBtnText} selectable>
+          {buffer ? "Сменить libapp.so" : "Открыть libapp.so"}
+        </Text>
+      </TouchableOpacity>
 
       <TouchableOpacity style={styles.mainBtn} onPress={run} disabled={loading || !buffer}>
         {loading ? <ActivityIndicator color={colors.onGold} /> : <Text style={styles.mainText} selectable>Сканировать</Text>}
       </TouchableOpacity>
+      {phase2 ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <ActivityIndicator color={colors.gold} size="small" />
+          <Text style={{ color: colors.textSecondary, fontSize: 12 }} selectable>
+            Phase 2: Code candidates…
+          </Text>
+        </View>
+      ) : null}
 
       {report && (
         <>
+
+          <View style={styles.ctaRow}>
+            <TouchableOpacity
+              style={[styles.ctaBtn, styles.ctaMain]}
+              disabled={codeCandidates.length === 0}
+              onPress={() => {
+                const best = codeCandidates.find((c) => c.patchHex) || codeCandidates[0];
+                if (!best) return;
+                navigatePatch(navigation, best.offset);
+              }}
+            >
+              <Text style={styles.ctaMainText} selectable>
+                Лучший → Патч
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.ctaBtn}
+              onPress={() => navigateRoot(navigation, "Wizard")}
+            >
+              <Text style={styles.ctaText} selectable>Мастер</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.ctaBtn}
+              onPress={() => {
+                let n = 0;
+                for (const c of codeCandidates) {
+                  if (!c.patchHex || c.score < 55) continue;
+                  enqueuePatch({
+                    offset: c.offset,
+                    hexOffset: c.hexOffset,
+                    oldHex: c.movzHex,
+                    newHex: c.patchHex,
+                    note: c.reason,
+                    source: "analyze",
+                  });
+                  n++;
+                  if (n >= 5) break;
+                }
+                setModal({
+                  title: "Очередь",
+                  message: n
+                    ? `Добавлено сильных кандидатов: ${n}`
+                    : "Нет сильных (score≥55) с patch HEX",
+                  actions: n
+                    ? [
+                        {
+                          label: "Открыть очередь",
+                          onPress: () => {
+                            setModal(null);
+                            navigateRoot(navigation, "Queue");
+                          },
+                        },
+                        { label: "OK", variant: "ghost" as const, onPress: () => setModal(null) },
+                      ]
+                    : [{ label: "OK", onPress: () => setModal(null) }],
+                });
+              }}
+            >
+              <Text style={styles.ctaText} selectable>В очередь</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={[styles.card, { borderColor: riskColor }]}>
             <Text style={[styles.risk, { color: riskColor }]} selectable>
               RISK {report.risk.level} · {report.risk.score}
@@ -178,54 +297,39 @@ export default function AnalyzeScreen({ navigation }: any) {
               </Text>
             ) : (
               codeCandidates.slice(0, 25).map((c, i) => (
-                <View key={i} style={styles.cand}>
-                  <Text style={styles.candOff} selectable>
-                    {c.hexOffset}
-                  </Text>
-                  <Text style={styles.candMeta} selectable>
-                    score {c.score} · {c.kind}
-                    {c.stringKey ? ` · ${c.stringKey}` : ""}
-                  </Text>
-                  <Text style={styles.candHex} selectable>
-                    {c.movzHex}
-                    {c.patchHex ? `  →  ${c.patchHex}` : ""}
-                  </Text>
-                  <Text style={styles.candReason} selectable numberOfLines={3}>
-                    {c.reason}
-                  </Text>
-                  <View style={styles.candActions}>
-                    <TouchableOpacity
-                      style={styles.candBtn}
-                      onPress={() =>
-                        setDisasm(
-                          c.disasm.map((l) => ({
-                            hexOffset:
-                              "0x" + l.offset.toString(16).toUpperCase().padStart(8, "0"),
-                            hex: l.hex,
-                            asm: l.asm,
-                            isCenter: l.isCenter,
-                          }))
-                        )
-                      }
-                    >
-                      <Text style={styles.candBtnText} selectable>Disasm</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.candBtn, styles.candBtnMain]}
-                      onPress={() =>
-                        navigation.navigate("ManualPatch", { initialOffset: c.offset })
-                      }
-                    >
-                      <Text style={styles.candBtnTextMain} selectable>Manual</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.candBtn}
-                      onPress={() => copyText("offset", c.hexOffset)}
-                    >
-                      <Text style={styles.candBtnText} selectable>Copy</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
+                <CandidateCard
+                  key={c.offset + "-" + i}
+                  item={c}
+                  onDisasm={() =>
+                    setDisasm(
+                      c.disasm.map((l) => ({
+                        hexOffset:
+                          "0x" + l.offset.toString(16).toUpperCase().padStart(8, "0"),
+                        hex: l.hex,
+                        asm: l.asm,
+                        isCenter: l.isCenter,
+                      }))
+                    )
+                  }
+                  onManual={() =>
+                    navigatePatch(navigation, c.offset)
+                  }
+                  onEnqueue={
+                    c.patchHex
+                      ? () => {
+                          enqueuePatch({
+                            offset: c.offset,
+                            hexOffset: c.hexOffset,
+                            oldHex: c.movzHex,
+                            newHex: c.patchHex!,
+                            note: c.reason,
+                            source: "analyze",
+                          });
+                          setModal({ title: "В очереди", message: c.hexOffset });
+                        }
+                      : undefined
+                  }
+                />
               ))
             )}
           </View>
@@ -242,7 +346,7 @@ export default function AnalyzeScreen({ navigation }: any) {
                       if (buffer) setDisasm(disasmAt(buffer, s.offset, 12));
                     }}
                     onLongPress={() => {
-                      navigation.navigate("ManualPatch", { initialOffset: s.offset });
+                      navigatePatch(navigation, s.offset);
                     }}
                   >
                     <Text style={styles.hit} selectable>
@@ -303,7 +407,7 @@ export default function AnalyzeScreen({ navigation }: any) {
 
           <TouchableOpacity
             style={[styles.secBtn, { marginTop: 10 }]}
-            onPress={() => navigation.navigate("ManualPatch")}
+            onPress={() => navigatePatch(navigation)}
           >
             <Text style={styles.secText} selectable>→ Manual Patch по offset</Text>
           </TouchableOpacity>
@@ -316,6 +420,7 @@ export default function AnalyzeScreen({ navigation }: any) {
         title={modal?.title || ""}
         message={modal?.message || ""}
         onClose={() => setModal(null)}
+        actions={(modal as any)?.actions}
       />
     </ScrollView>
   );
@@ -326,6 +431,33 @@ const styles = StyleSheet.create({
   title: { color: colors.goldLight, fontSize: 22, fontWeight: "800", letterSpacing: 0.2 },
   sub: { color: colors.textSecondary, marginTop: 4, marginBottom: 8, fontSize: 13 },
   hint: { color: colors.textSecondary, fontSize: 13, marginBottom: 16, lineHeight: 19 },
+  fileBtn: {
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginBottom: 10,
+    minHeight: 48,
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: colors.borderGold,
+  },
+  fileBtnText: { color: colors.gold, fontWeight: "800", fontSize: 15 },
+  ctaRow: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  ctaBtn: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: colors.borderGold,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+  },
+  ctaMain: { backgroundColor: colors.gold, borderColor: colors.gold, flex: 1.4 },
+  ctaText: { color: colors.gold, fontWeight: "800", fontSize: 12 },
+  ctaMainText: { color: colors.onGold, fontWeight: "800", fontSize: 13 },
+
   mainBtn: {
     backgroundColor: colors.gold,
     borderRadius: 14,

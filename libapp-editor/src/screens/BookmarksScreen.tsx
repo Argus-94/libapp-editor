@@ -1,38 +1,40 @@
+import { navigatePatch } from "../utils/nav";
 import React, { useState, useCallback } from "react";
 import {
-  View, Text, FlatList, StyleSheet, TouchableOpacity, Alert,
+  View, Text, FlatList, StyleSheet, TouchableOpacity,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { colors } from "../theme";
+import { useDialog } from "../components/DialogProvider";
 import { copyText } from "../utils/copyText";
 import { Bookmark } from "../types";
 import { loadBookmarks, saveBookmarks } from "../store/storage";
 
 export default function BookmarksScreen({ navigation }: any) {
+  const dialog = useDialog();
   const [list, setList] = useState<Bookmark[]>([]);
 
   const reload = async () => setList(await loadBookmarks());
   useFocusEffect(useCallback(() => { reload(); }, []));
 
   const remove = (id: string) => {
-    Alert.alert("Удалить закладку?", "", [
-      { text: "Отмена", style: "cancel" },
-      {
-        text: "Удалить",
-        style: "destructive",
-        onPress: async () => {
-          const next = list.filter((x) => x.id !== id);
-          await saveBookmarks(next);
-          setList(next);
-        },
+    dialog.confirm(
+      "Удалить закладку?",
+      "Запись будет удалена из списка",
+      async () => {
+        const next = list.filter((x) => x.id !== id);
+        await saveBookmarks(next);
+        setList(next);
       },
-    ]);
+      "Удалить",
+      true
+    );
   };
 
   return (
     <View style={styles.container}>
       <View style={styles.topBar}>
-        <Text style={styles.title}>Закладки ({list.length})</Text>
+        <Text style={styles.title} selectable>Закладки ({list.length})</Text>
       </View>
 
       <FlatList
@@ -40,25 +42,25 @@ export default function BookmarksScreen({ navigation }: any) {
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ padding: 16 }}
         ListEmptyComponent={
-          <Text style={styles.empty}>
+          <Text style={styles.empty} selectable>
             Закладок нет.{"\n"}В результатах поиска нажми ★
           </Text>
         }
         renderItem={({ item }) => (
           <View style={styles.card}>
-            <Text style={styles.offset}>{item.hexOffset}</Text>
-            <Text style={styles.label}>{item.label}</Text>
+            <Text style={styles.offset} selectable>{item.hexOffset}</Text>
+            <Text style={styles.label} selectable>{item.label}</Text>
             <View style={{ flexDirection: "row", gap: 12, marginTop: 6 }}>
               <TouchableOpacity onPress={() => copyText("offset", item.hexOffset)}>
-                <Text style={{ color: colors.gold, fontWeight: "700", fontSize: 12 }}>Copy</Text>
+                <Text style={{ color: colors.gold, fontWeight: "700", fontSize: 12 }} selectable>Copy</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => navigation.navigate("ManualPatch", { initialOffset: item.offset })}>
-                <Text style={{ color: colors.gold, fontWeight: "700", fontSize: 12 }}>Manual</Text>
+              <TouchableOpacity onPress={() => navigatePatch(navigation, item.offset)}>
+                <Text style={{ color: colors.gold, fontWeight: "700", fontSize: 12 }} selectable>Manual</Text>
               </TouchableOpacity>
             </View>
-            {!!item.fileName && <Text style={styles.meta}>{item.fileName}</Text>}
+            {!!item.fileName && <Text style={styles.meta} selectable>{item.fileName}</Text>}
             <TouchableOpacity onPress={() => remove(item.id)}>
-              <Text style={styles.delete}>Удалить</Text>
+              <Text style={styles.delete} selectable>Удалить</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -81,5 +83,5 @@ const styles = StyleSheet.create({
   offset: { color: colors.gold, fontWeight: "700", fontFamily: "monospace", marginBottom: 4 },
   label: { color: colors.text, fontSize: 16, marginBottom: 4 },
   meta: { color: colors.textSecondary, fontSize: 12, marginBottom: 8 },
-  delete: { color: colors.danger, fontSize: 13 },
+  delete: { color: colors.danger, fontSize: 13, marginTop: 8 },
 });

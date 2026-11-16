@@ -1,6 +1,8 @@
+import { useDialog } from "../components/DialogProvider";
+import { navigateRoot } from "../utils/nav";
 import React, { useState, useCallback } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, Switch, Alert, ScrollView,
+  View, Text, StyleSheet, TouchableOpacity, Switch, ScrollView,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
@@ -43,6 +45,7 @@ function ToolRow({
 }
 
 export default function SettingsScreen({ navigation }: any) {
+  const dialog = useDialog();
   const [settings, setSettings] = useState<AppSettings>({
     accent: "gold",
     autoBackup: true,
@@ -68,24 +71,38 @@ export default function SettingsScreen({ navigation }: any) {
         Основные шаги — в нижнем меню. Здесь доп. инструменты.
       </Text>
 
+      <Text style={styles.section} selectable>С чего начать</Text>
+      <ToolRow
+        icon="map-outline"
+        title="Мастер патча"
+        subtitle="Файл → анализ → один кандидат → патч"
+        onPress={() => navigateRoot(navigation, "Wizard")}
+      />
+      <ToolRow
+        icon="layers-outline"
+        title="Очередь патчей"
+        subtitle="Несколько offset → применить разом"
+        onPress={() => navigateRoot(navigation, "Queue")}
+      />
+
       <Text style={styles.section} selectable>После анализа</Text>
       <ToolRow
         icon="diamond-outline"
         title="PRO-скан"
         subtitle="Подсветка платных маркеров в so"
-        onPress={() => navigation.navigate("PremiumScan")}
+        onPress={() => navigateRoot(navigation, "PremiumScan")}
       />
       <ToolRow
         icon="flash-outline"
         title="Auto Unlock"
         subtitle="Только safe, мало патчей, с бэкапом"
-        onPress={() => navigation.navigate("AutoUnlock")}
+        onPress={() => navigateRoot(navigation, "AutoUnlock")}
       />
       <ToolRow
         icon="download-outline"
         title="Import dump"
         subtitle="Offsets из Blutter/r2 с ПК"
-        onPress={() => navigation.navigate("ImportDump")}
+        onPress={() => navigateRoot(navigation, "ImportDump")}
       />
 
       <Text style={styles.section} selectable>Файл и история</Text>
@@ -93,25 +110,25 @@ export default function SettingsScreen({ navigation }: any) {
         icon="git-compare-outline"
         title="Сравнение .so"
         subtitle="Текущий vs backup"
-        onPress={() => navigation.navigate("Compare")}
+        onPress={() => navigateRoot(navigation, "Compare")}
       />
       <ToolRow
         icon="bookmark-outline"
         title="Закладки"
         subtitle="Сохранённые offsets"
-        onPress={() => navigation.navigate("Bookmarks")}
+        onPress={() => navigateRoot(navigation, "Bookmarks")}
       />
       <ToolRow
         icon="time-outline"
         title="История патчей"
         subtitle="Что уже меняли"
-        onPress={() => navigation.navigate("History")}
+        onPress={() => navigateRoot(navigation, "History")}
       />
       <ToolRow
         icon="list-outline"
         title="Пресеты"
         subtitle="Готовые search/replace"
-        onPress={() => navigation.navigate("Presets")}
+        onPress={() => navigateRoot(navigation, "Presets")}
       />
 
       <Text style={styles.section} selectable>Справка и отладка</Text>
@@ -119,13 +136,13 @@ export default function SettingsScreen({ navigation }: any) {
         icon="book-outline"
         title="Инструкция"
         subtitle="Пошагово для начинающих"
-        onPress={() => navigation.navigate("Help")}
+        onPress={() => navigateRoot(navigation, "Help")}
       />
       <ToolRow
         icon="terminal-outline"
         title="Logcat"
         subtitle="Внутренний лог редактора"
-        onPress={() => navigation.navigate("Logcat")}
+        onPress={() => navigateRoot(navigation, "Logcat")}
       />
 
       <Text style={styles.section} selectable>Настройки</Text>
@@ -160,12 +177,31 @@ export default function SettingsScreen({ navigation }: any) {
         />
       </View>
 
+      <Text style={styles.label} selectable>Лимит истории</Text>
+      <View style={styles.histRow}>
+        {[50, 100, 200, 500].map((n) => (
+          <TouchableOpacity
+            key={n}
+            style={[styles.histChip, settings.maxHistory === n && styles.histChipOn]}
+            onPress={() => update({ maxHistory: n })}
+          >
+            <Text
+              style={[styles.histChipText, settings.maxHistory === n && styles.histChipTextOn]}
+              selectable
+            >
+              {n}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={styles.hint} selectable>Сколько записей патчей хранить (старые отбрасываются)</Text>
+
       <TouchableOpacity
         style={styles.about}
         onPress={() =>
-          Alert.alert(
+          dialog.alert(
             "LibApp Editor",
-            `v${APP_VERSION}\n\n1 Файл — открыть so\n2 Анализ — risk + code candidates\n3 Патч — Manual по offset из .text\n4 APK — extract / inject\n\nСтроки isPro ≠ код. Нужен offset ≥ .text`
+            `v${APP_VERSION}\n\nМастер или:\n1 Файл → so\n2 Анализ → candidates\n3 Патч / Очередь\n4 Compare\n5 APK inject + resign\n\nisPro-строка ≠ код. Патч только .text`
           )
         }
       >
@@ -220,6 +256,18 @@ const styles = StyleSheet.create({
   },
   itemTitle: { color: colors.text, fontWeight: "600", fontSize: 16 },
   itemDesc: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
+  histRow: { flexDirection: "row", gap: 10, marginBottom: 8 },
+  histChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  histChipOn: { borderColor: colors.gold, backgroundColor: colors.goldSoft },
+  histChipText: { color: colors.textSecondary, fontWeight: "700", fontSize: 14 },
+  histChipTextOn: { color: colors.gold },
   about: { marginTop: 24, alignItems: "center" },
   aboutText: { color: colors.gold, fontWeight: "600" },
 });

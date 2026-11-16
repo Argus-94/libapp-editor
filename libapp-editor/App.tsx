@@ -7,12 +7,15 @@ import { NavigationContainer, DarkTheme } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { StatusBar } from "expo-status-bar";
+import * as SplashScreen from "expo-splash-screen";
 import { Text, StyleSheet, View, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { colors } from "./src/theme";
-import { AppProvider } from "./src/store/AppContext";
+import { colors, applyAccent, Accent } from "./src/theme";
+import { AppProvider, useAppFile } from "./src/store/AppContext";
+import { DialogProvider } from "./src/components/DialogProvider";
 import { logger } from "./src/utils/logger";
 import { APP_VERSION } from "./src/version";
+import { loadSettings } from "./src/store/storage";
 
 import HomeScreen from "./src/screens/HomeScreen";
 import ResultsScreen from "./src/screens/ResultsScreen";
@@ -30,6 +33,11 @@ import AnalyzeScreen from "./src/screens/AnalyzeScreen";
 import ManualPatchScreen from "./src/screens/ManualPatchScreen";
 import ImportDumpScreen from "./src/screens/ImportDumpScreen";
 import LogcatScreen from "./src/screens/LogcatScreen";
+import WizardScreen from "./src/screens/WizardScreen";
+import QueueScreen from "./src/screens/QueueScreen";
+
+// Keep native splash until first React frame paints — prevents white flash on Android/iOS
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 enableScreens(true);
 
@@ -101,6 +109,9 @@ function MoreStack() {
         component={SettingsScreen}
         options={{ title: "Инструменты" }}
       />
+      <Stack.Screen name="Wizard" component={WizardScreen} options={{ title: "Мастер патча" }} />
+      <Stack.Screen name="Queue" component={QueueScreen} options={{ title: "Очередь патчей" }} />
+      <Stack.Screen name="ManualPatch" component={ManualPatchScreen} options={{ title: "Manual Patch" }} />
       <Stack.Screen name="Presets" component={PresetsScreen} options={{ title: "Пресеты" }} />
       <Stack.Screen name="PresetEdit" component={PresetEditScreen} options={{ title: "Редактор пресета" }} />
       <Stack.Screen name="Compare" component={CompareScreen} options={{ title: "Сравнение .so" }} />
@@ -130,6 +141,8 @@ function tabIcon(routeName: string, focused: boolean): IonName {
 }
 
 function MainTabs() {
+  const { dirty, patchQueue } = useAppFile();
+  const queueN = patchQueue.length;
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -154,27 +167,50 @@ function MainTabs() {
       <Tab.Screen
         name="FileTab"
         component={HomeScreen}
-        options={{ title: "1. Файл", tabBarLabel: "Файл" }}
+        options={{ title: "Файл", tabBarLabel: "Файл" }}
       />
       <Tab.Screen
         name="AnalyzeTab"
         component={AnalyzeScreen}
-        options={{ title: "2. Анализ", tabBarLabel: "Анализ" }}
+        options={{ title: "Анализ", tabBarLabel: "Анализ" }}
       />
       <Tab.Screen
         name="PatchTab"
         component={ManualPatchScreen}
-        options={{ title: "3. Патч", tabBarLabel: "Патч" }}
+        options={{
+          title: "Патч",
+          tabBarLabel: "Патч",
+          tabBarBadge: dirty ? "•" : undefined,
+          tabBarBadgeStyle: dirty
+            ? { backgroundColor: colors.gold, color: colors.onGold, fontSize: 10, minWidth: 16, height: 16 }
+            : undefined,
+        }}
       />
       <Tab.Screen
         name="ApkTab"
         component={ApkScreen}
-        options={{ title: "4. APK", tabBarLabel: "APK" }}
+        options={{
+          title: "APK",
+          tabBarLabel: "APK",
+          tabBarBadge: dirty ? "•" : undefined,
+          tabBarBadgeStyle: dirty
+            ? { backgroundColor: colors.gold, color: colors.onGold, fontSize: 10, minWidth: 16, height: 16 }
+            : undefined,
+        }}
       />
       <Tab.Screen
         name="MoreTab"
         component={MoreStack}
-        options={{ title: "Ещё", tabBarLabel: "Ещё", headerShown: false }}
+        options={{
+          title: "Ещё",
+          tabBarLabel: "Ещё",
+          headerShown: false,
+          tabBarBadge: queueN > 0 ? (queueN > 9 ? "9+" : String(queueN)) : undefined,
+          tabBarBadgeStyle:
+            queueN > 0
+              ? { backgroundColor: colors.gold, color: colors.onGold, fontSize: 10 }
+              : undefined,
+        }}
       />
     </Tab.Navigator>
   );
@@ -182,11 +218,28 @@ function MainTabs() {
 
 export default function App() {
   React.useEffect(() => {
-    try {
-      logger.info("App", "start", { version: APP_VERSION });
-    } catch {
-      /* ignore */
-    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await loadSettings();
+        if (!cancelled && s?.accent) applyAccent(s.accent as Accent);
+      } catch {
+        /* default gold */
+      }
+      // Hide splash only after first paint so root dark background is already on screen
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        SplashScreen.hideAsync().catch(() => {});
+        try {
+          logger.info("App", "start", { version: APP_VERSION });
+        } catch {
+          /* ignore */
+        }
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -194,6 +247,7 @@ export default function App() {
       <SafeAreaProvider>
         <ErrorBoundary>
           <AppProvider>
+            <DialogProvider>
             <NavigationContainer theme={navTheme}>
               <StatusBar style="light" />
               <Stack.Navigator screenOptions={stackScreenOptions}>
@@ -211,8 +265,11 @@ export default function App() {
                 <Stack.Screen name="PresetEdit" component={PresetEditScreen} options={{ title: "Редактор пресета" }} />
                 <Stack.Screen name="Logcat" component={LogcatScreen} options={{ title: "Logcat" }} />
                 <Stack.Screen name="History" component={HistoryScreen} options={{ title: "История" }} />
+                <Stack.Screen name="Wizard" component={WizardScreen} options={{ title: "Мастер патча" }} />
+                <Stack.Screen name="Queue" component={QueueScreen} options={{ title: "Очередь патчей" }} />
               </Stack.Navigator>
             </NavigationContainer>
+            </DialogProvider>
           </AppProvider>
         </ErrorBoundary>
       </SafeAreaProvider>
@@ -221,10 +278,11 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#0D0D0D" },
-  errorRoot: { flex: 1, backgroundColor: "#0D0D0D", padding: 24, paddingTop: 60 },
-  errorTitle: { color: "#E74C3C", fontSize: 22, fontWeight: "800", marginBottom: 4 },
-  errorVer: { color: "#AAAAAA", marginBottom: 16 },
+  // Match theme.background + app.json backgroundColor/splash — no white gap on launch
+  root: { flex: 1, backgroundColor: colors.background },
+  errorRoot: { flex: 1, backgroundColor: colors.background, padding: 24, paddingTop: 60 },
+  errorTitle: { color: colors.danger, fontSize: 22, fontWeight: "800", marginBottom: 4 },
+  errorVer: { color: colors.textSecondary, marginBottom: 16 },
   errorScroll: { flex: 1 },
-  errorBody: { color: "#F5F5F5", fontSize: 13, fontFamily: "monospace", marginBottom: 12 },
+  errorBody: { color: colors.text, fontSize: 13, fontFamily: "monospace", marginBottom: 12 },
 });

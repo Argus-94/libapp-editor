@@ -10,6 +10,7 @@ import { flutterAutoUnlock } from "../utils/flutterUnlock";
 import { analyzeLibapp } from "../utils/analyze";
 import { uint8ToBase64 } from "../utils/binary";
 import { addHistoryRecord } from "../store/storage";
+import { useDialog } from "../components/DialogProvider";
 import AppModal from "../components/AppModal";
 import DeveloperFooter from "../components/DeveloperFooter";
 import { soFingerprint } from "../utils/hash";
@@ -17,8 +18,9 @@ import { logger } from "../utils/logger";
 import { APP_VERSION } from "../version";
 
 export default function AutoUnlockScreen() {
-  const { buffer, fileName, updateBuffer } = useAppFile();
-  /** Safe ON by default — Dron Alerts proved near_ret crashes apps */
+  const dialog = useDialog();
+  const { buffer, fileName, updateBuffer, markClean } = useAppFile();
+  /** Safe ON by default — Dron s proved near_ret crashes apps */
   const [safe, setSafe] = useState(true);
   const [maxPatches, setMaxPatches] = useState("5");
   const [loading, setLoading] = useState(false);
@@ -147,7 +149,8 @@ export default function AutoUnlockScreen() {
       (fileName || "libapp").replace(/\.so$/i, "") +
       "_unlocked.so";
     await FileSystem.writeAsStringAsync(out, b64, { encoding: "base64" });
-    if (await Sharing.isAvailableAsync()) {
+    markClean();
+      if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(out, { mimeType: "application/octet-stream" });
     }
   };
@@ -226,10 +229,10 @@ const styles = StyleSheet.create({
   title: { color: colors.gold, fontSize: 22, fontWeight: "800" },
   sub: { color: colors.textSecondary, marginTop: 4, marginBottom: 12 },
   warnBox: {
-    backgroundColor: "#2A1A0A", borderRadius: 12, padding: 12, marginBottom: 16,
-    borderWidth: 1, borderColor: "#E67E22",
+    backgroundColor: colors.warningSurface, borderRadius: 12, padding: 12, marginBottom: 16,
+    borderWidth: 1, borderColor: colors.warning,
   },
-  warnTitle: { color: "#E67E22", fontWeight: "800", marginBottom: 4 },
+  warnTitle: { color: colors.warning, fontWeight: "800", marginBottom: 4 },
   warnBody: { color: colors.text, fontSize: 13, lineHeight: 18 },
   riskHint: { color: colors.textSecondary, fontSize: 12, marginTop: 8, lineHeight: 16 },
   row: { flexDirection: "row", alignItems: "center", marginBottom: 14 },
@@ -240,7 +243,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, marginBottom: 14,
   },
   mainBtn: {
-    backgroundColor: colors.gold, borderRadius: 14, padding: 16, alignItems: "center", marginBottom: 10,
+    backgroundColor: colors.gold, borderRadius: 12, padding: 16, alignItems: "center", marginBottom: 10,
   },
   mainText: { color: colors.onGold, fontWeight: "800", fontSize: 16 },
   secBtn: {

@@ -45,9 +45,9 @@ export default function ResultItem({
   const feat = item.type === "string" ? matchFeature(item.matchedValue) : null;
   const borderColor = feat
     ? feat.weight >= 90
-      ? "#E74C3C"
+      ? colors.danger
       : feat.weight >= 75
-      ? "#E67E22"
+      ? colors.warning
       : CATEGORY_META[feat.category]?.color || colors.border
     : colors.border;
 
@@ -153,7 +153,7 @@ const styles = StyleSheet.create({
   badgeText: { color: colors.textSecondary, fontSize: 10, fontWeight: "800" },
   badgeTextDark: { color: colors.onGold, fontSize: 10, fontWeight: "900" },
   value: { color: colors.text, fontWeight: "600", marginTop: 8, fontSize: 15 },
-  valueHot: { color: "#E74C3C" },
+  valueHot: { color: colors.danger },
   context: { color: colors.textSecondary, fontFamily: "monospace", fontSize: 11, marginTop: 6 },
   nearby: {
     marginTop: 8,
@@ -164,7 +164,7 @@ const styles = StyleSheet.create({
   nearbyLabel: { color: colors.textSecondary, fontSize: 12 },
   nearbyBtn: { marginTop: 6 },
   nearbyBtnText: { color: colors.gold, fontWeight: "700", fontSize: 12 },
-  warn: { color: "#E67E22", fontSize: 11, marginTop: 8, lineHeight: 15 },
+  warn: { color: colors.warning, fontSize: 11, marginTop: 8, lineHeight: 15 },
   actions: { flexDirection: "row", marginTop: 12, gap: 8, alignItems: "center" },
   btnGold: {
     flex: 1,

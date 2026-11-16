@@ -1,15 +1,17 @@
+import { navigatePatch } from "../utils/nav";
 import React, { useState, useCallback } from "react";
 import {
-  View, Text, FlatList, StyleSheet, TouchableOpacity, Alert,
-} from "react-native";
+  View, Text, FlatList, StyleSheet, TouchableOpacity, } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { colors } from "../theme";
+import { useDialog } from "../components/DialogProvider";
 import { copyText } from "../utils/copyText";
 import { logger } from "../utils/logger";
 import { PatchRecord } from "../types";
 import { loadHistory, saveHistory } from "../store/storage";
 
 export default function HistoryScreen({ navigation }: any) {
+  const dialog = useDialog();
   const [list, setList] = useState<PatchRecord[]>([]);
 
   const reload = async () => {
@@ -19,17 +21,16 @@ export default function HistoryScreen({ navigation }: any) {
   useFocusEffect(useCallback(() => { reload(); }, []));
 
   const clearAll = () => {
-    Alert.alert("Очистить историю?", "Все записи будут удалены", [
-      { text: "Отмена", style: "cancel" },
-      {
-        text: "Очистить",
-        style: "destructive",
-        onPress: async () => {
-          await saveHistory([]);
-          setList([]);
-        },
+    dialog.confirm(
+      "Очистить историю?",
+      "Все записи будут удалены",
+      async () => {
+        await saveHistory([]);
+        setList([]);
       },
-    ]);
+      "Очистить",
+      true
+    );
   };
 
   const removeOne = async (id: string) => {
@@ -66,21 +67,21 @@ export default function HistoryScreen({ navigation }: any) {
             </View>
             <Text style={styles.change} selectable>
               <Text style={styles.old} selectable>{item.oldValue}</Text>
-              {(item.note || (item as any).fingerprint) ? (
-                <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4 }} selectable>
-                  {item.note || ""}{(item as any).fingerprint ? ` · fp ${(item as any).fingerprint}` : ""}
-                </Text>
-              ) : null}
               {"  →  "}
               <Text style={styles.new} selectable>{item.newValue}</Text>
             </Text>
+            {(item.note || item.fingerprint) ? (
+              <Text style={styles.meta} selectable>
+                {[item.note, item.fingerprint ? `fp ${item.fingerprint}` : ""].filter(Boolean).join(" · ")}
+              </Text>
+            ) : null}
             <View style={styles.row}>
               <View style={{ flexDirection: "row", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <TouchableOpacity onPress={() => copyText("offset", item.hexOffset)}>
                   <Text style={{ color: colors.gold, fontWeight: "700", fontSize: 12 }} selectable>Copy</Text>
                 </TouchableOpacity>
                 {item.offset > 0 && (
-                  <TouchableOpacity onPress={() => navigation.navigate("ManualPatch", { initialOffset: item.offset })}>
+                  <TouchableOpacity onPress={() => navigatePatch(navigation, item.offset)}>
                     <Text style={{ color: colors.gold, fontWeight: "700", fontSize: 12 }} selectable>Manual</Text>
                   </TouchableOpacity>
                 )}
@@ -113,7 +114,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
   offset: { color: colors.gold, fontWeight: "700", fontFamily: "monospace" },
   time: { color: colors.textSecondary, fontSize: 12 },
-  change: { color: colors.text, fontSize: 15, marginBottom: 8 },
+  change: { color: colors.text, fontSize: 15, marginBottom: 4 },
+  meta: { color: colors.textSecondary, fontSize: 11, marginBottom: 8 },
   old: { color: colors.danger },
   new: { color: colors.success },
   type: { color: colors.textSecondary, fontSize: 12 },

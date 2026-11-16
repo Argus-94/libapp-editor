@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, LayoutAnimation, Platform, UIManager,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, LayoutAnimation, Platform, UIManager,
 } from "react-native";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { colors } from "../theme";
+import { useDialog } from "../components/DialogProvider";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -278,6 +279,7 @@ function Accordion({ section, open, onToggle }: { section: Section; open: boolea
 }
 
 export default function HelpScreen() {
+  const dialog = useDialog();
   const [openId, setOpenId] = useState<string | null>("what");
 
   const shareScript = async () => {
@@ -286,7 +288,7 @@ export default function HelpScreen() {
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(uri, { dialogTitle: "resign.sh" });
     } else {
-      Alert.alert("Скрипт", uri);
+      dialog.alert("Скрипт", uri);
     }
   };
 
@@ -299,7 +301,7 @@ export default function HelpScreen() {
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(uri, { mimeType: "text/plain", dialogTitle: "Инструкция" });
     } else {
-      Alert.alert("Гид", "Сохранено: " + uri);
+      dialog.alert("Гид", "Сохранено: " + uri);
     }
   };
 

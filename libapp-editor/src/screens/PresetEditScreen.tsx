@@ -1,6 +1,7 @@
+import { useDialog } from "../components/DialogProvider";
 import React, { useState, useEffect } from "react";
 import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, Alert, Switch,
+  View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, Switch,
 } from "react-native";
 import { colors } from "../theme";
 import { PatchPreset } from "../types";
@@ -9,6 +10,7 @@ import { loadPresets, savePresets } from "../store/storage";
 type PatchLine = PatchPreset["patches"][0];
 
 export default function PresetEditScreen({ route, navigation }: any) {
+  const dialog = useDialog();
   const presetId: string | undefined = route.params?.presetId;
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
@@ -53,12 +55,12 @@ export default function PresetEditScreen({ route, navigation }: any) {
 
   const save = async () => {
     if (!name.trim()) {
-      Alert.alert("Название обязательно");
+      dialog.alert("Название обязательно");
       return;
     }
     const clean = patches.filter((p) => p.search.trim() && p.replace.trim());
     if (clean.length === 0) {
-      Alert.alert("Добавь хотя бы одну замену");
+      dialog.alert("Добавь хотя бы одну замену");
       return;
     }
 
@@ -82,7 +84,7 @@ export default function PresetEditScreen({ route, navigation }: any) {
       ];
     }
     await savePresets(next);
-    Alert.alert("Сохранено", "Пресет обновлён", [
+    dialog.alert("Сохранено", "Пресет обновлён", [
       { text: "OK", onPress: () => navigation.goBack() },
     ]);
   };
@@ -94,7 +96,7 @@ export default function PresetEditScreen({ route, navigation }: any) {
         keyExtractor={(_, i) => String(i)}
         ListHeaderComponent={
           <View style={{ marginBottom: 12 }}>
-            <Text style={styles.label}>Название</Text>
+            <Text style={styles.label} selectable>Название</Text>
             <TextInput
               style={styles.input}
               value={name}
@@ -102,7 +104,7 @@ export default function PresetEditScreen({ route, navigation }: any) {
               placeholderTextColor={colors.textSecondary}
               placeholder="Unlock Pro"
             />
-            <Text style={styles.label}>Описание</Text>
+            <Text style={styles.label} selectable>Описание</Text>
             <TextInput
               style={styles.input}
               value={desc}
@@ -110,21 +112,21 @@ export default function PresetEditScreen({ route, navigation }: any) {
               placeholderTextColor={colors.textSecondary}
               placeholder="Опционально"
             />
-            <Text style={styles.section}>Замены</Text>
+            <Text style={styles.section} selectable>Замены</Text>
           </View>
         }
         contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
         renderItem={({ item, index }) => (
           <View style={styles.card}>
             <View style={styles.row}>
-              <Text style={styles.cardTitle}>#{index + 1}</Text>
+              <Text style={styles.cardTitle} selectable>#{index + 1}</Text>
               <TouchableOpacity onPress={() => removeLine(index)}>
-                <Text style={styles.del}>Удалить</Text>
+                <Text style={styles.del} selectable>Удалить</Text>
               </TouchableOpacity>
             </View>
 
             <View style={styles.switchRow}>
-              <Text style={styles.small}>HEX</Text>
+              <Text style={styles.small} selectable>HEX</Text>
               <Switch
                 value={item.searchType === "hex"}
                 onValueChange={(v) =>
@@ -137,7 +139,7 @@ export default function PresetEditScreen({ route, navigation }: any) {
               />
             </View>
 
-            <Text style={styles.small}>Найти</Text>
+            <Text style={styles.small} selectable>Найти</Text>
             <TextInput
               style={styles.input}
               value={item.search}
@@ -146,7 +148,7 @@ export default function PresetEditScreen({ route, navigation }: any) {
               placeholderTextColor={colors.textSecondary}
               autoCapitalize="none"
             />
-            <Text style={styles.small}>Заменить на</Text>
+            <Text style={styles.small} selectable>Заменить на</Text>
             <TextInput
               style={styles.input}
               value={item.replace}
@@ -160,10 +162,10 @@ export default function PresetEditScreen({ route, navigation }: any) {
         ListFooterComponent={
           <View style={{ gap: 12, marginTop: 8 }}>
             <TouchableOpacity style={styles.addLine} onPress={addLine}>
-              <Text style={styles.addLineText}>+ Добавить замену</Text>
+              <Text style={styles.addLineText} selectable>+ Добавить замену</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.saveBtn} onPress={save}>
-              <Text style={styles.saveText}>Сохранить пресет</Text>
+              <Text style={styles.saveText} selectable>Сохранить пресет</Text>
             </TouchableOpacity>
           </View>
         }
@@ -177,7 +179,7 @@ const styles = StyleSheet.create({
   label: { color: colors.gold, fontWeight: "700", marginBottom: 6 },
   section: { color: colors.gold, fontWeight: "700", fontSize: 16, marginTop: 8 },
   input: {
-    backgroundColor: colors.surface, borderRadius: 10, padding: 12, color: colors.text,
+    backgroundColor: colors.surface, borderRadius: 12, padding: 12, color: colors.text,
     marginBottom: 10, borderWidth: 1, borderColor: colors.border,
   },
   card: {

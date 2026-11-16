@@ -1,18 +1,20 @@
 import React, { useState } from "react";
 import {
-  View, Text, FlatList, StyleSheet, TouchableOpacity, Alert, ActivityIndicator,
+  View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { colors } from "../theme";
+import { useDialog } from "../components/DialogProvider";
 import { base64ToUint8, compareBuffers, DiffItem } from "../utils/binary";
 import { diffToMarkdown } from "../utils/report";
 import { useAppFile } from "../store/AppContext";
 import { logger } from "../utils/logger";
 
 export default function CompareScreen() {
-  const { buffer, fileName, backupUri } = useAppFile();
+  const dialog = useDialog();
+  const { buffer, fileName, originalBuffer, backupUri } = useAppFile();
   const [nameA, setNameA] = useState("");
   const [nameB, setNameB] = useState("");
   const [bufA, setBufA] = useState<Uint8Array | null>(null);
@@ -23,7 +25,7 @@ export default function CompareScreen() {
 
   const loadCurrent = () => {
     if (!buffer) {
-      Alert.alert("Нет so", "Открой libapp.so на Поиск");
+      dialog.alert("Нет so", "Открой libapp.so на Поиск");
       return;
     }
     setNameA(fileName || "current.so");
@@ -32,9 +34,38 @@ export default function CompareScreen() {
     logger.info("Compare", "loaded current buffer");
   };
 
+  const loadOriginal = () => {
+    if (!originalBuffer) {
+      dialog.alert("Нет original", "originalBuffer появляется после открытия so в этой сессии");
+      return;
+    }
+    setNameB((fileName || "libapp.so") + ".original");
+    setBufB(originalBuffer);
+    setDiffs([]);
+  };
+
+  const compareSession = () => {
+    if (!buffer || !originalBuffer) {
+      dialog.alert("Нужен so", "Открой so, сделай патч, затем сравни с original");
+      return;
+    }
+    setNameA(fileName || "current.so");
+    setNameB((fileName || "libapp.so") + ".original");
+    setBufA(buffer);
+    setBufB(originalBuffer);
+    setLoading(true);
+    setTimeout(() => {
+      const result = compareBuffers(buffer, originalBuffer);
+      setDiffs(result);
+      setLoading(false);
+      if (result.length === 0) dialog.alert("Идентичны", "Нет отличий от original");
+      else dialog.alert("Diff", `Отличий: ${result.length}`);
+    }, 20);
+  };
+
   const loadBackup = async () => {
     if (!backupUri) {
-      Alert.alert("Нет backup", "Включи автобэкап и открой so заново");
+      dialog.alert("Нет backup", "Включи автобэкап и открой so заново");
       return;
     }
     try {
@@ -46,7 +77,7 @@ export default function CompareScreen() {
       setDiffs([]);
       logger.info("Compare", "loaded backup", { backupUri });
     } catch (e: any) {
-      Alert.alert("Ошибка backup", e.message);
+      dialog.alert("Ошибка backup", e.message);
     } finally {
       setLoading(false);
     }
@@ -71,7 +102,7 @@ export default function CompareScreen() {
       setLoading(false);
     } catch (e: any) {
       setLoading(false);
-      Alert.alert("Ошибка", e.message);
+      dialog.alert("Ошибка", e.message);
     }
   };
 
@@ -79,7 +110,7 @@ export default function CompareScreen() {
 
   const runCompare = () => {
     if (!bufA || !bufB) {
-      Alert.alert("Выбери оба файла");
+      dialog.alert("Выбери оба файла");
       return;
     }
     setLoading(true);
@@ -88,7 +119,7 @@ export default function CompareScreen() {
       setDiffs(result);
       setLoading(false);
       if (result.length === 0) {
-        Alert.alert("Файлы идентичны", "Различий не найдено");
+        dialog.alert("Файлы идентичны", "Различий не найдено");
       }
     }, 30);
   };
@@ -100,6 +131,9 @@ export default function CompareScreen() {
           <TouchableOpacity style={[styles.pickBtn, { flex: 1 }]} onPress={loadCurrent}>
             <Text style={styles.pickText} selectable>A: текущий so</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={[styles.pickBtn, { flex: 1 }]} onPress={loadOriginal}>
+            <Text style={styles.pickText} selectable>B = original</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={[styles.pickBtn, { flex: 1 }]} onPress={loadBackup}>
             <Text style={styles.pickText} selectable>B: backup</Text>
           </TouchableOpacity>
@@ -110,9 +144,12 @@ export default function CompareScreen() {
         <TouchableOpacity style={styles.pickBtn} onPress={() => pick("b")}>
           <Text style={styles.pickText} selectable>{nameB || "Файл B (патченый)"}</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[styles.pickBtn]} onPress={compareSession} disabled={loading}>
+          <Text style={styles.pickText} selectable>Текущий vs original (сессия)</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.compareBtn} onPress={runCompare} disabled={loading}>
           {loading ? (
-            <ActivityIndicator color="#000" />
+            <ActivityIndicator color={colors.onGold} />
           ) : (
             <Text style={styles.compareText} selectable>Сравнить</Text>
           )}

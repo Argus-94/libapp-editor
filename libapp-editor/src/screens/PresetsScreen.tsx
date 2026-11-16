@@ -1,49 +1,47 @@
+import { navigateRoot } from "../utils/nav";
 import React, { useState, useCallback } from "react";
 import {
-  View, Text, FlatList, StyleSheet, TouchableOpacity, Alert,
-} from "react-native";
+  View, Text, FlatList, StyleSheet, TouchableOpacity, } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { colors } from "../theme";
+import { useDialog } from "../components/DialogProvider";
 import { PatchPreset } from "../types";
 import { loadPresets, savePresets, addHistoryRecord } from "../store/storage";
 import { useAppFile } from "../store/AppContext";
 import { applyPatches, uint8ToBase64 } from "../utils/binary";
 
 export default function PresetsScreen({ navigation }: any) {
-  const { buffer, fileName, updateBuffer } = useAppFile();
+  const dialog = useDialog();
+  const { buffer, fileName, updateBuffer, fingerprint } = useAppFile();
   const [list, setList] = useState<PatchPreset[]>([]);
 
   const reload = async () => setList(await loadPresets());
   useFocusEffect(useCallback(() => { reload(); }, []));
 
   const remove = (id: string) => {
-    Alert.alert("Удалить пресет?", "", [
-      { text: "Отмена", style: "cancel" },
-      {
-        text: "Удалить",
-        style: "destructive",
-        onPress: async () => {
-          const next = list.filter((x) => x.id !== id);
-          await savePresets(next);
-          setList(next);
-        },
+    dialog.confirm(
+      "Удалить пресет?",
+      "Убрать пресет из списка",
+      async () => {
+        const next = list.filter((x) => x.id !== id);
+        await savePresets(next);
+        setList(next);
       },
-    ]);
+      "Удалить",
+      true
+    );
   };
 
   const applyPreset = (preset: PatchPreset) => {
     if (!buffer) {
-      Alert.alert(
-        "Нет открытого файла",
-        "Сначала открой libapp.so на вкладке «Поиск»."
-      );
+      dialog.alert("Нет открытого файла", "Сначала открой libapp.so на вкладке «Поиск».");
       return;
     }
 
-    Alert.alert(
+    dialog.alert(
       "Применить пресет?",
       `"${preset.name}" → ${fileName || "libapp.so"}\nЗамен: ${preset.patches.length}`,
       [
@@ -73,6 +71,7 @@ export default function PresetsScreen({ navigation }: any) {
                     newValue: `(x${d.count})`,
                     type: "hex",
                     note: preset.name,
+                    fingerprint: fingerprint || undefined,
                   });
                 }
               }
@@ -81,7 +80,7 @@ export default function PresetsScreen({ navigation }: any) {
                 .map((d) => `${d.search}: ${d.count}`)
                 .join("\n");
 
-              Alert.alert(
+              dialog.alert(
                 "Пресет применён",
                 `Всего замен: ${result.applied}\n\n${summary}`,
                 [
@@ -107,7 +106,7 @@ export default function PresetsScreen({ navigation }: any) {
                 ]
               );
             } catch (e: any) {
-              Alert.alert("Ошибка", e.message);
+              dialog.alert("Ошибка", e.message);
             }
           },
         },
@@ -126,10 +125,10 @@ export default function PresetsScreen({ navigation }: any) {
           dialogTitle: "Экспорт пресетов",
         });
       } else {
-        Alert.alert("Сохранено", uri);
+        dialog.alert("Сохранено", uri);
       }
     } catch (e: any) {
-      Alert.alert("Ошибка экспорта", e.message);
+      dialog.alert("Ошибка экспорта", e.message);
     }
   };
 
@@ -145,7 +144,7 @@ export default function PresetsScreen({ navigation }: any) {
       });
       const parsed = JSON.parse(text);
       if (!Array.isArray(parsed)) {
-        Alert.alert("Неверный формат", "Ожидался массив пресетов");
+        dialog.alert("Неверный формат", "Ожидался массив пресетов");
         return;
       }
       const merged = [...parsed, ...list];
@@ -157,9 +156,9 @@ export default function PresetsScreen({ navigation }: any) {
       const next = Array.from(map.values());
       await savePresets(next);
       setList(next);
-      Alert.alert("Импорт", `Загружено. Всего пресетов: ${next.length}`);
+      dialog.alert("Импорт", `Загружено. Всего пресетов: ${next.length}`);
     } catch (e: any) {
-      Alert.alert("Ошибка импорта", e.message);
+      dialog.alert("Ошибка импорта", e.message);
     }
   };
 
@@ -167,25 +166,25 @@ export default function PresetsScreen({ navigation }: any) {
     <View style={styles.container}>
       <View style={styles.topBar}>
         <View>
-          <Text style={styles.title}>Пресеты ({list.length})</Text>
-          <Text style={styles.fileHint}>
+          <Text style={styles.title} selectable>Пресеты ({list.length})</Text>
+          <Text style={styles.fileHint} selectable>
             {buffer ? `Файл: ${fileName}` : "Файл не открыт"}
           </Text>
         </View>
         <TouchableOpacity
           style={styles.addBtn}
-          onPress={() => navigation.navigate("PresetEdit", {})}
+          onPress={() => navigateRoot(navigation, "PresetEdit", {})}
         >
-          <Text style={styles.addText}>+ Новый</Text>
+          <Text style={styles.addText} selectable>+ Новый</Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.tools}>
         <TouchableOpacity style={styles.toolBtn} onPress={exportPresets}>
-          <Text style={styles.toolText}>Экспорт</Text>
+          <Text style={styles.toolText} selectable>Экспорт</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.toolBtn} onPress={importPresets}>
-          <Text style={styles.toolText}>Импорт</Text>
+          <Text style={styles.toolText} selectable>Импорт</Text>
         </TouchableOpacity>
       </View>
 
@@ -193,25 +192,25 @@ export default function PresetsScreen({ navigation }: any) {
         data={list}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ padding: 16 }}
-        ListEmptyComponent={<Text style={styles.empty}>Пресетов пока нет</Text>}
+        ListEmptyComponent={<Text style={styles.empty} selectable>Пресетов пока нет</Text>}
         renderItem={({ item }) => (
           <View style={styles.card}>
-            <Text style={styles.name}>{item.name}</Text>
-            {!!item.description && <Text style={styles.desc}>{item.description}</Text>}
-            <Text style={styles.meta}>
+            <Text style={styles.name} selectable>{item.name}</Text>
+            {!!item.description && <Text style={styles.desc} selectable>{item.description}</Text>}
+            <Text style={styles.meta} selectable>
               {item.patches.map((p) => p.search).join(" · ") || "пусто"}
             </Text>
             <View style={styles.actions}>
               <TouchableOpacity style={styles.applyBtn} onPress={() => applyPreset(item)}>
-                <Text style={styles.applyText}>Применить</Text>
+                <Text style={styles.applyText} selectable>Применить</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => navigation.navigate("PresetEdit", { presetId: item.id })}
+                onPress={() => navigateRoot(navigation, "PresetEdit", { presetId: item.id })}
               >
-                <Text style={styles.edit}>Изменить</Text>
+                <Text style={styles.edit} selectable>Изменить</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => remove(item.id)}>
-                <Text style={styles.delete}>Удалить</Text>
+                <Text style={styles.delete} selectable>Удалить</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -237,14 +236,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.gold,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 8,
+    borderRadius: 12,
   },
   addText: { color: colors.onGold, fontWeight: "700" },
   tools: { flexDirection: "row", gap: 10, paddingHorizontal: 16, paddingTop: 12 },
   toolBtn: {
     flex: 1,
     backgroundColor: colors.surface,
-    borderRadius: 10,
+    borderRadius: 12,
     padding: 10,
     borderWidth: 1,
     borderColor: colors.border,
@@ -268,7 +267,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.gold,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 8,
+    borderRadius: 12,
   },
   applyText: { color: colors.onGold, fontWeight: "700", fontSize: 13 },
   edit: { color: colors.gold, fontSize: 13, fontWeight: "600" },

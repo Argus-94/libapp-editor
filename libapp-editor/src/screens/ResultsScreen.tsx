@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View, Text, FlatList, StyleSheet, TextInput, Modal,
   TouchableOpacity, ActivityIndicator, ScrollView,
@@ -19,11 +19,15 @@ import { SearchResult, PatchRecord } from "../types";
 import { addHistoryRecord, loadBookmarks, saveBookmarks } from "../store/storage";
 import { useAppFile } from "../store/AppContext";
 import { copyText } from "../utils/copyText";
-import { scanCodeCandidates, CodeCandidate } from "../utils/onDeviceRe";
+import { CodeCandidate } from "../utils/onDeviceRe";
+import { runCodeSearch } from "../domain/codeSearch";
+import CandidateCard from "../components/CandidateCard";
+import { navigateRoot, navigatePatch, navigateTab } from "../utils/nav";
 
 export default function ResultsScreen({ route, navigation }: any) {
-  const { updateBuffer } = useAppFile();
-  const { results: initialResults, buffer: initialBuffer, fileName, fromApk } = route.params || {};
+  const { updateBuffer, enqueuePatch, markClean, buffer: ctxBuffer, fileName: ctxFileName, fingerprint } = useAppFile();
+  const { results: initialResults, buffer: initialBuffer, fileName: paramFileName, fromApk } = route.params || {};
+  const fileName = paramFileName || ctxFileName || "libapp.so";
 
   const [results] = useState<SearchResult[]>(() => {
     const list = [...(initialResults || [])];
@@ -41,10 +45,17 @@ export default function ResultsScreen({ route, navigation }: any) {
     list.sort((a, b) => score(b) - score(a) || a.offset - b.offset);
     return list;
   });
-  // initialBuffer may be missing if screen opened without params — never crash
-  const [buffer, setBuffer] = useState<Uint8Array | null>(
-    initialBuffer instanceof Uint8Array ? initialBuffer : null
-  );
+  // Prefer context buffer (single source of truth); params buffer only as legacy fallback
+  const [buffer, setBuffer] = useState<Uint8Array | null>(() => {
+    if (initialBuffer instanceof Uint8Array) return initialBuffer;
+    if (ctxBuffer instanceof Uint8Array) return ctxBuffer;
+    return null;
+  });
+
+  // If opened without params buffer, pick up AppContext when available
+  useEffect(() => {
+    if (!buffer && ctxBuffer instanceof Uint8Array) setBuffer(ctxBuffer);
+  }, [ctxBuffer, buffer]);
   const [modalVisible, setModalVisible] = useState(false);
   const [currentItem, setCurrentItem] = useState<SearchResult | null>(null);
   const [customValue, setCustomValue] = useState("");
@@ -66,7 +77,10 @@ export default function ResultsScreen({ route, navigation }: any) {
   } | null>(null);
 
   const addToHistory = async (rec: Omit<PatchRecord, "id" | "timestamp">) => {
-    await addHistoryRecord(rec);
+    await addHistoryRecord({
+      ...rec,
+      fingerprint: rec.fingerprint || fingerprint || undefined,
+    });
   };
 
   // buffer updates go through AppContext (no function-in-params)
@@ -82,6 +96,7 @@ export default function ResultsScreen({ route, navigation }: any) {
       newValue: `x${extra}`,
       type: "hex",
       note,
+      fingerprint: fingerprint || undefined,
     });
   };
 
@@ -165,10 +180,10 @@ export default function ResultsScreen({ route, navigation }: any) {
       });
       setTimeout(() => {
         try {
-          const cands = scanCodeCandidates({
+          const cands = runCodeSearch({
             buffer,
             strings: [{ key: item.matchedValue, offset: item.offset }],
-          });
+          }).candidates;
           const linked = cands.filter(
             (c) =>
               c.stringKey &&
@@ -190,7 +205,7 @@ export default function ResultsScreen({ route, navigation }: any) {
                   label: "Analyze",
                   onPress: () => {
                     setInfoModal(null);
-                    navigation.navigate("AnalyzeTab");
+                    navigateTab(navigation, "AnalyzeTab");
                   },
                 },
                 { label: "OK", onPress: () => setInfoModal(null), variant: "ghost" },
@@ -239,10 +254,10 @@ export default function ResultsScreen({ route, navigation }: any) {
       });
       setTimeout(() => {
         try {
-          const cands = scanCodeCandidates({
+          const cands = runCodeSearch({
             buffer,
             strings: [{ key: actionItem.matchedValue, offset: actionItem.offset }],
-          });
+          }).candidates;
           // Prefer linked to this key
           const linked = cands.filter(
             (c) =>
@@ -266,7 +281,7 @@ export default function ResultsScreen({ route, navigation }: any) {
                   label: "Открыть Analyze",
                   onPress: () => {
                     setInfoModal(null);
-                    navigation.navigate("AnalyzeTab");
+                    navigateTab(navigation, "AnalyzeTab");
                   },
                 },
                 { label: "OK", onPress: () => setInfoModal(null), variant: "ghost" },
@@ -462,6 +477,7 @@ export default function ResultsScreen({ route, navigation }: any) {
         : "libapp_patched.so";
       const outUri = (FileSystem.cacheDirectory || "") + outName;
       await FileSystem.writeAsStringAsync(outUri, base64, { encoding: "base64" });
+      markClean();
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(outUri, {
           mimeType: "application/octet-stream",
@@ -536,7 +552,7 @@ export default function ResultsScreen({ route, navigation }: any) {
             onBookmark={() => addBookmark(item)}
             onDisasm={() => showDisasm(item)}
             onManual={() =>
-              navigation.navigate("ManualPatch", { initialOffset: item.offset })
+              navigatePatch(navigation, item.offset)
             }
             onCopyOffset={() => copyText("offset", item.hexOffset)}
             smartLabel={
@@ -688,65 +704,26 @@ export default function ResultsScreen({ route, navigation }: any) {
             </Text>
             <ScrollView style={{ maxHeight: 420 }}>
               {codeCands.map((c, i) => (
-                <View
+                <CandidateCard
                   key={c.offset + "-" + i}
-                  style={{
-                    backgroundColor: colors.surfaceLight,
-                    borderRadius: 12,
-                    padding: 12,
-                    marginBottom: 10,
-                    borderWidth: 1,
-                    borderColor: colors.borderGold,
+                  item={c}
+                  onDisasm={() => {
+                    if (!buffer) return;
+                    setDisasmTitle(c.hexOffset);
+                    setDisasmLines(disasmAround(buffer, c.offset, 10));
+                    setDisasmVisible(true);
                   }}
-                >
-                  <Text style={{ color: colors.goldLight, fontFamily: "monospace", fontWeight: "800" }} selectable>
-                    {c.hexOffset}  score={c.score}
-                  </Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }} selectable>
-                    {c.movzHex}{c.patchHex ? " → " + c.patchHex : ""}
-                  </Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 4 }} selectable>
-                    {c.reason}
-                  </Text>
-                  <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-                    <TouchableOpacity
-                      style={{
-                        flex: 1, minHeight: 44, borderRadius: 10, alignItems: "center", justifyContent: "center",
-                        borderWidth: 1, borderColor: colors.borderGold,
-                      }}
-                      onPress={() => {
-                        if (!buffer) return;
-                        setDisasmTitle(c.hexOffset);
-                        setDisasmLines(disasmAround(buffer, c.offset, 10));
-                        setDisasmVisible(true);
-                      }}
-                    >
-                      <Text style={{ color: colors.gold, fontWeight: "800" }} selectable>Disasm</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{
-                        flex: 1, minHeight: 44, borderRadius: 10, alignItems: "center", justifyContent: "center",
-                        backgroundColor: colors.gold,
-                      }}
-                      onPress={() => {
-                        setCodeCandsVisible(false);
-                        navigation.navigate("ManualPatch", { initialOffset: c.offset });
-                      }}
-                    >
-                      <Text style={{ color: colors.onGold, fontWeight: "800" }} selectable>Manual</Text>
-                    </TouchableOpacity>
-                    {!!c.patchHex && (
-                      <TouchableOpacity
-                        style={{
-                          flex: 1, minHeight: 44, borderRadius: 10, alignItems: "center", justifyContent: "center",
-                          borderWidth: 1, borderColor: colors.success,
-                        }}
-                        onPress={async () => {
+                  onManual={() => {
+                    setCodeCandsVisible(false);
+                    navigatePatch(navigation, c.offset);
+                  }}
+                  onTrue={
+                    c.patchHex
+                      ? async () => {
                           if (!buffer || !c.patchHex) return;
                           try {
                             const bytes = hexToBytes(c.patchHex.replace(/\s+/g, ""));
-                            const oldHex = c.movzHex;
-                            await applyPatch(c.offset, bytes, oldHex, c.patchHex, "hex");
+                            await applyPatch(c.offset, bytes, c.movzHex, c.patchHex, "hex");
                             setCodeCandsVisible(false);
                           } catch (e: any) {
                             setInfoModal({
@@ -755,13 +732,39 @@ export default function ResultsScreen({ route, navigation }: any) {
                               actions: [{ label: "OK", onPress: () => setInfoModal(null) }],
                             });
                           }
-                        }}
-                      >
-                        <Text style={{ color: colors.success, fontWeight: "800" }} selectable>True</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
+                        }
+                      : undefined
+                  }
+                  onEnqueue={
+                    c.patchHex
+                      ? () => {
+                          enqueuePatch({
+                            offset: c.offset,
+                            hexOffset: c.hexOffset,
+                            oldHex: c.movzHex,
+                            newHex: c.patchHex!,
+                            note: c.reason,
+                            source: "results",
+                          });
+                          setInfoModal({
+                            title: "В очереди",
+                            message: c.hexOffset,
+                            actions: [
+                              {
+                                label: "Очередь",
+                                onPress: () => {
+                                  setInfoModal(null);
+                                  setCodeCandsVisible(false);
+                                  navigateRoot(navigation, "Queue");
+                                },
+                              },
+                              { label: "OK", variant: "ghost" as const, onPress: () => setInfoModal(null) },
+                            ],
+                          });
+                        }
+                      : undefined
+                  }
+                />
               ))}
             </ScrollView>
             <TouchableOpacity
@@ -804,7 +807,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.gold,
     paddingHorizontal: 18,
     paddingVertical: 10,
-    borderRadius: 10,
+    borderRadius: 12,
     minWidth: 110,
     alignItems: "center",
   },
@@ -827,7 +830,7 @@ const styles = StyleSheet.create({
   modalTitle: { color: colors.goldLight, fontSize: 18, fontWeight: "800", marginBottom: 6 },
   modalOffset: { color: colors.textSecondary, fontFamily: "monospace", marginBottom: 12 },
   warn: {
-    color: "#E67E22",
+    color: colors.warning,
     fontSize: 13,
     lineHeight: 19,
     marginBottom: 12,
@@ -869,7 +872,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.gold,
     paddingHorizontal: 22,
     paddingVertical: 11,
-    borderRadius: 10,
+    borderRadius: 12,
   },
   modalOkText: { color: colors.onGold, fontWeight: "700", fontSize: 15 },
 });

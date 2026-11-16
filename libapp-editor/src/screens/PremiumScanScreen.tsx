@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from "react";
 import {
-  View, Text, FlatList, StyleSheet, TouchableOpacity, Alert, ActivityIndicator,
+  View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator,
   ScrollView,
 } from "react-native";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { colors } from "../theme";
+import { useDialog } from "../components/DialogProvider";
 import { logger } from "../utils/logger";
 import { useAppFile } from "../store/AppContext";
 import { findBoolsNear, applyBoolUnlock, deepUnlock } from "../utils/unlock";
@@ -34,7 +35,8 @@ const FILTERS: { id: "all" | FeatureCategory; title: string }[] = [
 ];
 
 export default function PremiumScanScreen({ navigation }: any) {
-  const { buffer, fileName, updateBuffer } = useAppFile();
+  const dialog = useDialog();
+  const { buffer, fileName, updateBuffer, fingerprint } = useAppFile();
   const [loading, setLoading] = useState(false);
   const [hits, setHits] = useState<FeatureHit[]>([]);
   const [filter, setFilter] = useState<"all" | FeatureCategory>("all");
@@ -50,7 +52,7 @@ export default function PremiumScanScreen({ navigation }: any) {
 
   const scan = () => {
     if (!buffer) {
-      Alert.alert("Нет файла", "Сначала открой libapp.so на вкладке «Поиск»");
+      dialog.alert("Нет файла", "Сначала открой libapp.so на вкладке «Поиск»");
       return;
     }
     setLoading(true);
@@ -62,11 +64,11 @@ export default function PremiumScanScreen({ navigation }: any) {
         setHits(found);
         setLoading(false);
         if (found.length === 0) {
-          Alert.alert("Пусто", "Маркеры платных функций не найдены");
+          dialog.alert("Пусто", "Маркеры платных функций не найдены");
         }
       } catch (e: any) {
         setLoading(false);
-        Alert.alert("Ошибка", e.message);
+        dialog.alert("Ошибка", e.message);
       }
     }, 40);
   };
@@ -74,13 +76,12 @@ export default function PremiumScanScreen({ navigation }: any) {
   const unlockOne = async (item: FeatureHit, forceTrue: boolean) => {
     if (!activeBuf) return;
     if (item.score < 55) {
-      Alert.alert(
+      dialog.confirm(
         "Слабый маркер",
         "Низкий приоритет — рядом скорее всего нет кода геттера.\nВсё равно патчить bool near?",
-        [
-          { text: "Отмена", style: "cancel" },
-          { text: "Патчить", onPress: () => doUnlock(item, forceTrue) },
-        ]
+        () => doUnlock(item, forceTrue),
+        "Патчить",
+        true
       );
       return;
     }
@@ -95,10 +96,7 @@ export default function PremiumScanScreen({ navigation }: any) {
       result = deepUnlock(activeBuf, [item.offset], forceTrue);
     }
     if (result.patched === 0) {
-      Alert.alert(
-        "Bool рядом нет",
-        "Строка в data, код геттера далеко.\nОткрой Manual Patch или Analyze."
-      );
+      dialog.alert("Bool рядом нет", "Строка в data, код геттера далеко.\nОткрой Manual Patch или Analyze.");
       return;
     }
     setLocalBuf(result.buffer);
@@ -111,18 +109,19 @@ export default function PremiumScanScreen({ navigation }: any) {
       newValue: forceTrue ? "UNLOCK" : "LOCK",
       type: "hex",
       note: `premium:${item.category}`,
+      fingerprint: fingerprint || undefined,
     });
     setHits(scanPremiumFeatures(result.buffer));
-    Alert.alert(forceTrue ? "Патч" : "Откат", `${item.key}: ${result.patched} bool`);
+    dialog.alert(forceTrue ? "Патч" : "Откат", `${item.key}: ${result.patched} bool`);
   };
 
   const unlockCritical = (forceTrue: boolean) => {
     const targets = hits.filter((h) => h.highlight === "critical" || h.highlight === "high");
     if (!activeBuf || targets.length === 0) {
-      Alert.alert("Нет high/critical", "Сначала скан");
+      dialog.alert("Нет high/critical", "Сначала скан");
       return;
     }
-    Alert.alert(
+    dialog.alert(
       "Только high/critical",
       `Маркеров: ${targets.length}. Bool near могут быть случайными — риск краша.`,
       [
@@ -144,10 +143,10 @@ export default function PremiumScanScreen({ navigation }: any) {
                 setPatched((c) => c + result.patched);
                 setHits(scanPremiumFeatures(result.buffer));
                 setLoading(false);
-                Alert.alert("Готово", `Патчей: ${result.patched}`);
+                dialog.alert("Готово", `Патчей: ${result.patched}`);
               } catch (e: any) {
                 setLoading(false);
-                Alert.alert("Ошибка", e.message);
+                dialog.alert("Ошибка", e.message);
               }
             }, 30);
           },

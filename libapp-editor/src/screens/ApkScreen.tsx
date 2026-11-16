@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator,
+  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   ScrollView, FlatList,
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
@@ -13,10 +13,13 @@ import { findAll } from "../utils/binary";
 import { deepUnlock } from "../utils/unlock";
 import { addHistoryRecord } from "../store/storage";
 import { useAppFile } from "../store/AppContext";
+import { useDialog } from "../components/DialogProvider";
 import AppModal from "../components/AppModal";
+import { navigateRoot, navigatePatch, navigateTab } from "../utils/nav";
 
 export default function ApkScreen({ navigation }: any) {
-  const { setFile, buffer, fileName, readyForApk, setReadyForApk, setAbi, updateBuffer, abi } = useAppFile();
+  const dialog = useDialog();
+  const { setFile, buffer, fileName, readyForApk, setReadyForApk, setAbi, updateBuffer, abi, dirty } = useAppFile();
   const [apkName, setApkName] = useState("");
   const [apkUri, setApkUri] = useState<string | null>(null);
   const [libs, setLibs] = useState<ExtractedSo[]>([]);
@@ -76,7 +79,7 @@ export default function ApkScreen({ navigation }: any) {
       setPatchedMap({});
       setSelected(null);
       if (extracted.length === 0) {
-        Alert.alert("Не найдено", "В APK нет libapp.so (это не Flutter-приложение?)");
+        dialog.alert("Не найдено", "В APK нет libapp.so (это не Flutter-приложение?)");
       }
     } catch (e: any) {
       setErrorModal({ title: "Ошибка", message: e.message || String(e) });
@@ -91,7 +94,7 @@ export default function ApkScreen({ navigation }: any) {
     setSelected(lib);
     setFile(data, `${lib.abi}/libapp.so`, null, { abi: lib.abi });
     setAbi(lib.abi);
-    navigation.navigate("Analyze");
+    navigateTab(navigation, "AnalyzeTab");
   };
 
   const openManual = (lib: ExtractedSo) => {
@@ -99,35 +102,26 @@ export default function ApkScreen({ navigation }: any) {
     setSelected(lib);
     setFile(data, `${lib.abi}/libapp.so`, null, { abi: lib.abi });
     setAbi(lib.abi);
-    navigation.navigate("ManualPatch");
+    navigatePatch(navigation);
   };
 
   const markReady = (lib: ExtractedSo) => {
     if (!buffer) {
-      Alert.alert("Нет буфера", "Сначала Analyze/Manual по этому so");
+      dialog.alert("Нет буфера", "Сначала Analyze/Manual по этому so");
       return;
     }
     setPatchedMap((prev) => ({ ...prev, [lib.path]: buffer }));
     setReadyForApk(true);
     logger.info("APK", "markReady", { path: lib.path, abi: lib.abi });
     setSelected(lib);
-    Alert.alert(
-      "Готово к сборке",
-      `${lib.abi}\nБуфер редактора → ${lib.path}\nТеперь «Собрать APK».`
-    );
+    dialog.alert("Готово к сборке", `${lib.abi}\nБуфер редактора → ${lib.path}\nТеперь «Собрать APK».`);
   };
 
   const quickUnlock = async (lib: ExtractedSo) => {
-    Alert.alert(
+    dialog.confirm(
       "Быстрый unlock — риск",
-      "Эвристика near-bool часто роняет Flutter-приложения (пример: Dron Alerts).\n\n" +
-        "Лучше: Открыть → Analyze / Платные функции → Manual.\n\nПродолжить всё равно?",
-      [
-        { text: "Отмена", style: "cancel" },
-        {
-          text: "Всё равно",
-          style: "destructive",
-          onPress: async () => {
+      "Эвристика near-bool часто роняет Flutter-приложения.\n\nЛучше: Analyze / Manual.\n\nПродолжить всё равно?",
+      async () => {
             setLoading(true);
             setMsg(`Патч ${lib.abi}...`);
             try {
@@ -150,20 +144,18 @@ export default function ApkScreen({ navigation }: any) {
                 newValue: `x${result.patched}`,
                 type: "hex",
                 note: "quick unlock (warned)",
+                fingerprint: lib.fingerprint || undefined,
               });
-              Alert.alert(
-                "Готово",
-                `${lib.abi}: ~${result.patched} патчей.\nfp ${lib.fingerprint}\nСобери APK и проверь ЗАПУСК.`
-              );
+              dialog.alert("Готово", `${lib.abi}: ~${result.patched} патчей.\nfp ${lib.fingerprint}\nСобери APK и проверь ЗАПУСК.`);
             } catch (e: any) {
               setErrorModal({ title: "Ошибка", message: e.message || String(e) });
             } finally {
               setLoading(false);
               setMsg("");
             }
-          },
-        },
-      ]
+      },
+      "Всё равно",
+      true
     );
   };
 
@@ -180,7 +172,7 @@ export default function ApkScreen({ navigation }: any) {
     }
     const keys = Object.keys(map);
     if (keys.length === 0) {
-      Alert.alert(
+      dialog.alert(
         "Нет патчей",
         "Открой so через Analyze/Manual, внеси правки, затем собери.\n" +
           "Либо используй «Быстрый unlock» (риск)."
@@ -201,14 +193,14 @@ export default function ApkScreen({ navigation }: any) {
       const fpLines = result.report
         .map((r) => `${r.path}\n  ${r.sizeBefore}→${r.sizeAfter}  fp ${r.beforeFp}→${r.afterFp}`)
         .join("\n");
-      Alert.alert(
+      dialog.alert(
         "APK готов",
         `Подпись META-INF снята (${result.strippedSignatures.length} файлов).\n` +
           `Нужна переподпись (uber-apk-signer / apksigner).\n\n` +
           `Проверка inject:\n${fpLines}`
       );
     } catch (e: any) {
-      Alert.alert("Ошибка сборки", e.message);
+      dialog.alert("Ошибка сборки", e.message);
     } finally {
       setLoading(false);
       setMsg("");
@@ -217,6 +209,13 @@ export default function ApkScreen({ navigation }: any) {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {dirty ? (
+        <View style={{ backgroundColor: colors.warningSurface, padding: 10, borderBottomWidth: 1, borderBottomColor: colors.borderGold }}>
+          <Text style={{ color: colors.gold, fontWeight: "700", fontSize: 12 }} selectable>
+            so в редакторе изменён (dirty) — inject возьмёт текущий buffer
+          </Text>
+        </View>
+      ) : null}
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
       <Text style={styles.title} selectable>Работа с APK</Text>
       <Text style={styles.sub} selectable>Достать libapp.so → патч → собрать обратно</Text>
@@ -265,7 +264,7 @@ export default function ApkScreen({ navigation }: any) {
                   onPress={() => {
                     const data = patchedMap[lib.path] || lib.data;
                     setFile(data, `${lib.abi}/libapp.so`, null);
-                    navigation.navigate("PremiumScan");
+                    navigateRoot(navigation, "PremiumScan");
                   }}
                 >
                   <Text style={styles.btnOutlineText} selectable>Платные функции</Text>
@@ -286,7 +285,7 @@ export default function ApkScreen({ navigation }: any) {
             style={styles.multiBtn}
             onPress={async () => {
               if (libs.length === 0) return;
-              Alert.alert(
+              dialog.alert(
                 "Патч всех ABI?",
                 `Будет применён быстрый unlock ко всем ${libs.length} libapp.so`,
                 [

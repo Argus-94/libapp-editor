@@ -1,19 +1,19 @@
 import React, { useState, useCallback } from "react";
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
-  ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform,
 } from "react-native";
-import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system";
 import { useFocusEffect } from "@react-navigation/native";
 import { colors } from "../theme";
-import { searchString, searchHex, base64ToUint8 } from "../utils/binary";
+import { useDialog } from "../components/DialogProvider";
+import { searchString, searchHex } from "../utils/binary";
 import { SearchResult } from "../types";
-import { loadSettings, loadLastAnalyze, LastAnalyzeSummary } from "../store/storage";
+import { loadLastAnalyze, loadSessionMeta, LastAnalyzeSummary, SessionMeta } from "../store/storage";
 import { useAppFile } from "../store/AppContext";
 import { soFingerprint } from "../utils/hash";
 import DeveloperFooter from "../components/DeveloperFooter";
 import { logger } from "../utils/logger";
+import { openLibappFile } from "../utils/openLibapp";
+import { navigateRoot, navigateTab } from "../utils/nav";
 
 const PRESETS_QUICK = [
   "isPremium", "isPro", "isSubscribed", "purchased",
@@ -21,87 +21,54 @@ const PRESETS_QUICK = [
 ];
 
 export default function HomeScreen({ navigation }: any) {
-  const { buffer, fileName, setFile, backupUri, setBackupUri, abi, readyForApk } = useAppFile();
+  const dialog = useDialog();
+  const { buffer, fileName, setFile, backupUri, setBackupUri, abi, readyForApk, dirty, fingerprint, patchQueue, revertToOriginal } = useAppFile();
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"string" | "hex">("string");
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
-  const [autoBackup, setAutoBackup] = useState(true);
   const [lastReport, setLastReport] = useState<LastAnalyzeSummary | null>(null);
+  const [session, setSession] = useState<SessionMeta | null>(null);
 
   useFocusEffect(
     useCallback(() => {
-      loadSettings()
-        .then((s) => setAutoBackup(s.autoBackup))
-        .catch(() => {});
       loadLastAnalyze()
         .then(setLastReport)
         .catch(() => setLastReport(null));
+      loadSessionMeta()
+        .then(setSession)
+        .catch(() => setSession(null));
     }, [])
   );
 
   const pickFile = async () => {
+    setLoading(true);
+    setLoadingMsg("Открытие файла...");
     try {
-      const res = await DocumentPicker.getDocumentAsync({
-        type: "*/*",
-        copyToCacheDirectory: true,
-      });
-      if (res.canceled || !res.assets?.[0]) return;
-
-      const asset = res.assets[0];
-      setLoading(true);
-      setLoadingMsg("Проверка размера...");
-
-      // Защита от слишком больших файлов (OOM)
-      try {
-        const info = await FileSystem.getInfoAsync(asset.uri, { size: true });
-        // @ts-ignore
-        const size = info.exists && info.size ? info.size : 0;
-        if (size > 80 * 1024 * 1024) {
-          setLoading(false);
-          setLoadingMsg("");
-          Alert.alert(
-            "Файл слишком большой",
-            `${(size / 1024 / 1024).toFixed(1)} MB\n\nТелефон может не справиться с загрузкой в память.\nРекомендуется файл < 50–60 MB.`
-          );
-          return;
-        }
-      } catch {
-        // ignore size check errors
+      const r = await openLibappFile();
+      if (!r.ok) {
+        if (r.error !== "cancelled") dialog.alert("Файл", r.error);
+        return;
       }
-
-      setLoadingMsg("Чтение файла...");
-      const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: "base64" });
-      setLoadingMsg("Декодирование...");
-      const bytes = base64ToUint8(base64);
-      logger.info("Home", "file opened", { name: asset.name, size: bytes.length });
-      setFile(bytes, asset.name, asset.uri);
-
-      if (autoBackup) {
-        setLoadingMsg("Автобэкап...");
-        const bakUri = (FileSystem.cacheDirectory || "") + asset.name + ".bak";
-        await FileSystem.writeAsStringAsync(bakUri, base64, { encoding: "base64" });
-        setBackupUri(bakUri);
-        logger.info("Home", "backup saved", { bakUri });
-      }
-
-      setLoading(false);
-      setLoadingMsg("");
+      setFile(r.buffer, r.name, r.uri, { backupUri: r.backupUri });
+      if (r.backupUri) setBackupUri(r.backupUri);
+      logger.info("Home", "file opened", { name: r.name, size: r.buffer.length });
     } catch (e: any) {
+      dialog.alert("Ошибка", e.message || "Не удалось открыть файл");
+    } finally {
       setLoading(false);
       setLoadingMsg("");
-      Alert.alert("Ошибка", e.message || "Не удалось открыть файл");
     }
   };
 
   const doSearch = (customQuery?: string) => {
     const q = (customQuery ?? query).trim();
     if (!buffer) {
-      Alert.alert("Файл не выбран", "Сначала выбери libapp.so");
+      dialog.alert("Файл не выбран", "Сначала выбери libapp.so");
       return;
     }
     if (!q) {
-      Alert.alert("Пустой запрос", "Введи строку или hex");
+      dialog.alert("Пустой запрос", "Введи строку или hex");
       return;
     }
 
@@ -116,16 +83,16 @@ export default function HomeScreen({ navigation }: any) {
         setLoading(false);
         setLoadingMsg("");
 
-        navigation.navigate("Results", {
+        // buffer already in AppContext — do not pass Uint8Array via navigation params
+        navigateRoot(navigation, "Results", {
           results,
-          buffer,
           fileName,
           query: q,
         });
       } catch (e: any) {
         setLoading(false);
         setLoadingMsg("");
-        Alert.alert("Ошибка поиска", e.message);
+        dialog.alert("Ошибка поиска", e.message);
       }
     }, 30);
   };
@@ -154,19 +121,19 @@ export default function HomeScreen({ navigation }: any) {
           <View style={styles.quickRow}>
             <TouchableOpacity
               style={styles.quickBtn}
-              onPress={() => navigation.navigate("Analyze")}
+              onPress={() => navigateTab(navigation, "AnalyzeTab")}
             >
               <Text style={styles.quickText} selectable>Analyze</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickBtn}
-              onPress={() => navigation.navigate("ImportDump")}
+              onPress={() => navigateRoot(navigation, "ImportDump")}
             >
               <Text style={styles.quickText} selectable>Import</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickBtn}
-              onPress={() => navigation.navigate("Compare")}
+              onPress={() => navigateRoot(navigation, "Compare")}
             >
               <Text style={styles.quickText} selectable>Diff</Text>
             </TouchableOpacity>
@@ -176,7 +143,7 @@ export default function HomeScreen({ navigation }: any) {
         {lastReport && (
           <TouchableOpacity
             style={styles.lastCard}
-            onPress={() => navigation.navigate("Analyze")}
+            onPress={() => navigateTab(navigation, "AnalyzeTab")}
             activeOpacity={0.85}
           >
             <Text style={styles.lastTitle} selectable>Последний Analyze</Text>
@@ -247,6 +214,38 @@ export default function HomeScreen({ navigation }: any) {
           </View>
         </View>
 
+        {(dirty || patchQueue.length > 0 || session) && (
+          <View style={styles.sessionCard}>
+            <Text style={styles.sessionTitle} selectable>Сессия</Text>
+            <Text style={styles.sessionBody} selectable>
+              {buffer ? fileName || "so в памяти" : "файл не открыт"}
+              {dirty ? " · dirty" : ""}
+              {fingerprint ? ` · fp ${fingerprint.slice(0, 8)}…` : ""}
+              {patchQueue.length ? ` · очередь ${patchQueue.length}` : ""}
+              {session?.lastRisk ? ` · last risk ${session.lastRisk}` : ""}
+            </Text>
+            {patchQueue.length > 0 && (
+              <TouchableOpacity onPress={() => navigateRoot(navigation, "Queue")}>
+                <Text style={{ color: colors.gold, fontWeight: "700", marginTop: 8 }} selectable>
+                  Открыть очередь →
+                </Text>
+              </TouchableOpacity>
+            )}
+            {dirty && (
+              <TouchableOpacity
+                onPress={() => {
+                  if (revertToOriginal()) dialog.alert("Откат", "Buffer = original");
+                  else dialog.alert("Нет original", "Открой so ещё раз");
+                }}
+              >
+                <Text style={{ color: colors.danger, fontWeight: "700", marginTop: 8 }} selectable>
+                  Откат к original
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         <View style={styles.workflow}>
           <Text style={styles.sectionTitle} selectable>Порядок работы</Text>
           <Text style={styles.workflowHint} selectable>
@@ -255,7 +254,7 @@ export default function HomeScreen({ navigation }: any) {
 
           <TouchableOpacity
             style={[styles.stepBtn, styles.stepPrimary]}
-            onPress={() => navigation.navigate("AnalyzeTab")}
+            onPress={() => navigateTab(navigation, "AnalyzeTab")}
             disabled={!buffer}
           >
             <Text style={styles.stepNum} selectable>2</Text>
@@ -267,7 +266,7 @@ export default function HomeScreen({ navigation }: any) {
 
           <TouchableOpacity
             style={styles.stepBtn}
-            onPress={() => navigation.navigate("PatchTab")}
+            onPress={() => navigateTab(navigation, "PatchTab")}
             disabled={!buffer}
           >
             <Text style={[styles.stepNum, styles.stepNumMuted]} selectable>3</Text>
@@ -279,7 +278,7 @@ export default function HomeScreen({ navigation }: any) {
 
           <TouchableOpacity
             style={styles.stepBtn}
-            onPress={() => navigation.navigate("ApkTab")}
+            onPress={() => navigateTab(navigation, "ApkTab")}
           >
             <Text style={[styles.stepNum, styles.stepNumMuted]} selectable>4</Text>
             <View style={styles.stepBody}>
@@ -290,21 +289,21 @@ export default function HomeScreen({ navigation }: any) {
 
           <Text style={[styles.sectionTitle, { marginTop: 22 }]} selectable>Дополнительно</Text>
           <View style={styles.extraRow}>
-            <TouchableOpacity style={styles.extraBtn} onPress={() => navigation.navigate("ImportDump")}>
+            <TouchableOpacity style={styles.extraBtn} onPress={() => navigateRoot(navigation, "ImportDump")}>
               <Text style={styles.extraText} selectable>Import dump</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.extraBtn} onPress={() => navigation.navigate("AutoUnlock")}>
+            <TouchableOpacity style={styles.extraBtn} onPress={() => navigateRoot(navigation, "AutoUnlock")}>
               <Text style={styles.extraText} selectable>Auto Unlock</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.extraRow}>
-            <TouchableOpacity style={styles.extraBtn} onPress={() => navigation.navigate("PremiumScan")}>
+            <TouchableOpacity style={styles.extraBtn} onPress={() => navigateRoot(navigation, "PremiumScan")}>
               <Text style={styles.extraText} selectable>PRO-скан</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.extraBtn} onPress={() => navigation.navigate("Compare")}>
+            <TouchableOpacity style={styles.extraBtn} onPress={() => navigateRoot(navigation, "Compare")}>
               <Text style={styles.extraText} selectable>Сравнить</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.extraBtn} onPress={() => navigation.navigate("Help")}>
+            <TouchableOpacity style={styles.extraBtn} onPress={() => navigateRoot(navigation, "Help")}>
               <Text style={styles.extraText} selectable>Справка</Text>
             </TouchableOpacity>
           </View>
@@ -380,6 +379,16 @@ const styles = StyleSheet.create({
   },
   lastTitle: { color: colors.gold, fontWeight: "700", fontSize: 13, marginBottom: 4 },
   lastBody: { color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontFamily: "monospace" },
+  sessionCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.borderGold,
+  },
+  sessionTitle: { color: colors.gold, fontWeight: "800", fontSize: 13, marginBottom: 4 },
+  sessionBody: { color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontFamily: "monospace" },
   workflow: { marginTop: 28, marginBottom: 8 },
   workflowHint: { color: colors.textSecondary, fontSize: 12, marginBottom: 14, lineHeight: 18 },
   stepBtn: {
@@ -392,7 +401,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  stepPrimary: { borderColor: colors.gold, backgroundColor: "#1a1810" },
+  stepPrimary: { borderColor: colors.gold, backgroundColor: colors.goldSoft },
   stepNum: {
     width: 32, height: 32, borderRadius: 16, backgroundColor: colors.gold,
     color: colors.onGold, fontWeight: "900", fontSize: 16, textAlign: "center", lineHeight: 32, marginRight: 12,

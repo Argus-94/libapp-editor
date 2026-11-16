@@ -99,4 +99,31 @@ export const ui = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
   },
+  input: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 14,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+    fontSize: 15,
+  },
+  warnBox: {
+    backgroundColor: colors.warningSurface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.warning,
+  },
+  warnTitle: {
+    color: colors.warning,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+  warnBody: {
+    color: colors.text,
+    fontSize: 13,
+    lineHeight: 18,
+  },
 });

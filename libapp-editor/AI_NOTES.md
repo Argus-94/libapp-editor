@@ -1,10 +1,27 @@
-# LibApp Editor v2.9.5
+# LibApp Editor v2.12.7
 
-## v2.9.5 — on-device RE (not Blutter/r2/Ghidra)
-- New module `src/utils/onDeviceRe.ts`
-- ADRP+ADD xref from PRO strings → movz x0/w0 #0 + ret in .text
-- Analyze screen: section **Code candidates** with score, patch HEX, Manual Patch
-- Full Blutter / radare2 / Ghidra remain desktop-only (impossible in Expo RN)
+## Status: architecture complete
+- domain, DialogProvider, Wizard/Queue, nav helpers, CandidateCard
+- session meta + fingerprint, splash anti-flash, applyAccent
+- Results buffer from AppContext, history fp, maxHistory UI
 
-## Prior
-- 2.9.4 audit, KEYS, ResultsScreen guards, gesture-handler, Kotlin 1.9.25
+## Flow
+Мастер/Файл → Анализ → Патч/Очередь → Compare → APK (+ resign on PC)
+
+## v2.12.7
+- Home: removed dead autoBackup local state (openLibapp reads settings itself)
+- Presets: clean useAppFile destructure
+- .gitignore for Expo
+
+## Earlier
+- 2.12.6 Results context buffer, Bookmarks confirm
+- 2.12.5 Analyze/Manual/Queue history + session fp fixes
+- 2.12.4–3 session meta, accent, white flash
+
+## v2.12.8
+- UI style pass: theme.warning / dangerDark / warningSurface
+- Hardcoded risk/warn colors → theme tokens
+- Presets + PresetEdit: selectable text; radii 12
+- Logcat clear → dialog.confirm
+- App error screen uses theme colors
+- ui.ts: input + warnBox tokens
